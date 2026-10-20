@@ -20,6 +20,7 @@ _latest = None        # (count, plots)
 _latest_t = 0.0
 _connected = False
 _started = False
+_input = {"grab": None, "active": None, "screen_frames": 0}   # สถานะเมาส์/หน้าต่างล่าสุดจากเกม (None = ไม่รู้)
 
 
 def parse_tab_lines(lines):
@@ -47,6 +48,16 @@ def is_connected() -> bool:
     return _connected
 
 
+def screen_frames() -> int:
+    """จำนวนเฟรมสะสมที่มี GUI เปิดอยู่ (นับในเกมทุกเฟรม ไม่ใช่ทุก 0.1 วินาที)"""
+    return _input["screen_frames"]
+
+
+def input_state():
+    """(mouse_grabbed, window_active) ล่าสุด แต่ละค่าเป็น True/False/None(ไม่รู้)"""
+    return _input["grab"], _input["active"]
+
+
 def _reader(server):
     global _latest, _latest_t, _connected
     try:
@@ -62,6 +73,15 @@ def _reader(server):
             elif line == "END":
                 _latest = parse_tab_lines(buf)
                 _latest_t = time.time()
+            elif line.startswith("GRAB:"):
+                _input["grab"] = {"1": True, "0": False}.get(line[5:])
+            elif line.startswith("SCREENFRAMES:"):
+                try:
+                    _input["screen_frames"] = int(line[13:])
+                except ValueError:
+                    pass
+            elif line.startswith("ACTIVE:"):
+                _input["active"] = {"1": True, "0": False}.get(line[7:])
             else:
                 buf.append(line)
     except Exception:
@@ -93,8 +113,14 @@ StandardCharsets = JavaClass("java.nio.charset.StandardCharsets")
 sock = Socket("127.0.0.1", """ + str(port) + r""")
 writer = BufferedWriter(OutputStreamWriter(sock.getOutputStream(), StandardCharsets.UTF_8))
 last = {"t": 0}
+counts = {"screen": 0}
 
 def frame(_):
+    try:
+        if mc.screen is not None:
+            counts["screen"] += 1
+    except Exception as e:
+        pass
     now = System.currentTimeMillis()
     if now - last["t"] < """ + str(int(TAB_BRIDGE_INTERVAL_MS)) + r""":
         return
@@ -111,6 +137,19 @@ def frame(_):
             t = d.getString()
             if "Alive" in t or "Plots" in t:
                 out.append(t)
+        g = "?"
+        a = "?"
+        try:
+            g = "1" if mc.mouseHandler.isMouseGrabbed() else "0"
+        except Exception as e:
+            pass
+        try:
+            a = "1" if mc.isWindowActive() else "0"
+        except Exception as e:
+            pass
+        writer.write("SCREENFRAMES:" + str(counts["screen"]) + "\n")
+        writer.write("GRAB:" + g + "\n")
+        writer.write("ACTIVE:" + a + "\n")
         writer.write("BEGIN\n")
         for t in out:
             writer.write(t + "\n")

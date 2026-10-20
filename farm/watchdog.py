@@ -9,8 +9,9 @@ import threading
 import time
 
 from system.lib import minescript as ms
-from farm.config import WATCHDOG_ENABLED, WATCHDOG_STUCK_SECONDS
-from farm.utils import cecho, WARN
+from farm.config import WATCHDOG_ENABLED, WATCHDOG_STUCK_SECONDS, INPUT_MONITOR_ENABLED
+from farm.utils import cecho, WARN, ERROR
+from farm import tab_bridge
 from farm.movement import release_all_keys
 from farm import sensors
 import farm.state as state
@@ -27,13 +28,28 @@ def _active() -> bool:
     )
 
 
+def _check_input(last):
+    """บันทึก/เตือนเมื่อสถานะเมาส์หรือหน้าต่างเกมเปลี่ยนระหว่างฟาร์ม (สาเหตุที่คลิกซ้ายไม่ทำงาน)"""
+    cur = tab_bridge.input_state()
+    if cur != last:
+        grab, active = cur
+        if grab is False or active is False:
+            cecho(f"[Input] mouse_grabbed={grab} window_active={active} — คลิกซ้ายอาจไม่ทำงาน คลิกที่หน้าต่างเกมเพื่อคืนการควบคุม", ERROR)
+        elif last is not None and (last[0] is False or last[1] is False):
+            cecho(f"[Input] back to normal (mouse_grabbed={grab} window_active={active})", WARN)
+    return cur
+
+
 def _loop():
     last_pos = None
     last_move = time.time()
+    last_input = None
     while True:
         time.sleep(1.0)
         try:
             now = time.time()
+            if INPUT_MONITOR_ENABLED and state.is_running and state.mode == state.Mode.FARMING:
+                last_input = _check_input(last_input)
             if not _active():
                 last_pos, last_move = None, now
                 continue
@@ -46,6 +62,7 @@ def _loop():
                     f"[Watchdog] No movement for {int(now - last_move)}s! Recovering...", WARN
                 )
                 release_all_keys()
+                state.expect_teleport(6.0)
                 ms.execute("/warp garden")
                 state.watchdog_triggered = True
                 last_pos, last_move = None, time.time()

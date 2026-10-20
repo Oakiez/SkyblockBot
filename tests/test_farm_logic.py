@@ -222,6 +222,74 @@ class PestCycleLoadoutTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class FailsafeTests(unittest.TestCase):
+    def test_teleport_detection(self):
+        from farm.failsafe import teleport_detected
+
+        self.assertFalse(teleport_detected(None, (0, 70, 0), 3.0))
+        self.assertFalse(teleport_detected((0, 70, 0), (1.2, 70, 0), 3.0))      # เดินเร็วปกติ
+        self.assertTrue(teleport_detected((0, 70, 0), (-4.0, 70, 0), 3.0))      # ถูกดึงถอยหลัง
+        self.assertTrue(teleport_detected((0, 70, 0), (0, 90, 0), 3.0))         # ย้ายแนวตั้ง
+
+    def test_bedrock_count_and_positions(self):
+        from farm.failsafe import count_bedrock, enclosure_positions
+
+        self.assertEqual(count_bedrock(["minecraft:bedrock", "minecraft:wheat", None, "minecraft:Bedrock"]), 2)
+        pts = enclosure_positions((10.5, 71.0, -3.2))
+        self.assertEqual(len(pts), 9)
+        self.assertIn([10, 71, -3], pts)     # ข้างตัว (ทิศ +z) ระดับเท้า
+        self.assertIn([10, 73, -4], pts)     # เหนือหัว
+        self.assertNotIn([10, 71, -4], pts)  # ช่องที่ตัวเองยืนอยู่ไม่นับ
+
+    def test_farm_next_to_bedrock_edge_is_not_enclosure(self):
+        from farm.failsafe import count_bedrock
+        from farm.config import FAILSAFE_BEDROCK_MIN_BLOCKS
+
+        edge = ["minecraft:bedrock"] * 2 + ["minecraft:air"] * 7      # ติดขอบ bedrock ด้านเดียว
+        box = ["minecraft:bedrock"] * 9                               # ถูกขังกล่อง
+        self.assertLess(count_bedrock(edge), FAILSAFE_BEDROCK_MIN_BLOCKS)
+        self.assertGreaterEqual(count_bedrock(box), FAILSAFE_BEDROCK_MIN_BLOCKS)
+
+    def test_rotation_jump(self):
+        from farm.failsafe import rotation_jumped
+
+        self.assertFalse(rotation_jumped(None, (10, 0), 15))
+        self.assertFalse(rotation_jumped((123.96, 0.0), (123.96, 0.0), 15))
+        self.assertFalse(rotation_jumped((179.0, 0.0), (-179.0, 0.0), 15))   # ข้ามขอบ ±180 = ต่างกันแค่ 2 องศา
+        self.assertTrue(rotation_jumped((123.96, 0.0), (160.0, 0.0), 15))
+        self.assertTrue(rotation_jumped((123.96, 0.0), (123.96, 40.0), 15))
+
+    def test_smooth_look_marks_expected_disturbance(self):
+        import farm.movement as mv
+
+        state.teleport_expected_until = 0
+        mv.ms.player_orientation.return_value = (0.0, 0.0)
+        mv.smooth_look_at(90, 0, steps=1, delay=0)
+        self.assertGreater(state.teleport_expected_until, time.time())
+
+    def test_trigger_stops_bot_once(self):
+        import farm.failsafe as fs
+
+        state.is_running = True
+        state.failsafe_reason = ""
+        fs.release_all_keys = lambda: None
+        fs.stop_all_movement = lambda: None
+        try:
+            fs.trigger("test")
+            self.assertFalse(state.is_running)
+            self.assertEqual(state.failsafe_reason, "test")
+            fs.trigger("again")                       # ไม่ทับเหตุผลเดิม
+            self.assertEqual(state.failsafe_reason, "test")
+        finally:
+            state.failsafe_reason = ""
+            state.is_running = False
+
+    def test_expected_teleport_window(self):
+        state.teleport_expected_until = 0
+        state.expect_teleport(5.0)
+        self.assertGreater(state.teleport_expected_until, time.time())
+
+
 class PestCooldownTests(unittest.TestCase):
     def test_parse_matches_real_skyhanni_text(self):
         import farm.recovery as rec

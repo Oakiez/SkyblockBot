@@ -90,6 +90,7 @@ def smooth_look_at(
     target_yaw: float, target_pitch: float, steps: int = 10, delay: float = 0.05
 ):
     """หมุนกล้องไปยัง yaw/pitch เป้าหมายแบบ smooth"""
+    state.expect_teleport(steps * delay + 1.0)   # ไม่ให้ failsafe เข้าใจว่าถูกหันหัวบังคับ
     current_yaw, current_pitch = ms.player_orientation()
 
     while target_yaw > 180:
@@ -226,6 +227,7 @@ def move_to_plot_center(
 
 def warp_to_garden_and_land():
     """Teleport ไป garden แล้วลงจอด"""
+    state.expect_teleport(6.0)
     ms.execute("/warp garden")
     time.sleep(1)
     ms.player_press_sneak(True)

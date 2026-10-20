@@ -27,6 +27,8 @@ current_outfit_slot: int = None
 # Pest
 last_pest_spawn_time: float = 0
 last_cooldown_event_time: float = 0
+teleport_expected_until: float = 0   # ช่วงที่สคริปต์วาร์ปเอง failsafe จะไม่ตีความว่าผิดปกติ
+failsafe_reason: str = ""            # เหตุผลที่ failsafe หยุดบอท (ว่าง = ปกติ)
 pest_alive_hint: int = 0          # จำนวน pest ที่รู้จากข้อความ spawn (รวมสะสมจนกว่าจะกำจัดเสร็จ)
 pending_pest_plots: set = set()   # plot ที่รู้จากข้อความ spawn ว่ามี pest ต้องไปกำจัด
 last_spawn_info: tuple = None   # (จำนวน, plot) จากข้อความ "N Pest have spawned in Plot - X"
@@ -108,4 +110,11 @@ def in_mode(new_mode: str):
         yield
     finally:
         mode = prev
+
+
+def expect_teleport(seconds: float = 6.0) -> None:
+    """บอกว่าสคริปต์กำลังวาร์ปเอง (กัน failsafe เข้าใจผิดว่าถูกดึงตัว)"""
+    global teleport_expected_until
+    import time as _t
+    teleport_expected_until = _t.time() + seconds
 

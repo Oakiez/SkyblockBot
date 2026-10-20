@@ -70,6 +70,20 @@ VACUUM_REACH          = 5.0    # ใกล้กว่านี้ถึงห�
 VACUUM_TICK           = 0.05   # รอบอัปเดตตอนดูด
 PEST_APPEAR_TIMEOUT   = 1.5    # รอ entity ของ pest โหลดหลัง /plottp
 
+# --- Failsafe: เจอเหตุผิดปกติที่เหมือนการตรวจ macro → หยุดบอททันที (ไม่ตอบสนองแทนผู้เล่น) ---
+FAILSAFE_ENABLED              = True
+FAILSAFE_JUMP_BLOCKS          = 3.0   # ตำแหน่งกระโดดเกินกี่บล็อกในรอบเดียว (0.1 วินาที) ถือว่าถูกวาร์ป/ดึง
+FAILSAFE_SCREEN_POLLS         = 3     # GUI เปิดติดกันกี่รอบ (×0.1 วินาที) ที่สคริปต์ไม่ได้สั่ง
+FAILSAFE_ROTATION_DEGREES     = 15.0  # มุมกล้อง (yaw/pitch) เปลี่ยนเกินกี่องศาในรอบเดียวที่สคริปต์ไม่ได้สั่ง = ถูกหันหัวบังคับ
+FAILSAFE_GRACE_SECONDS        = 1.5   # ต้องอยู่ในโหมดฟาร์มปกติต่อเนื่องกี่วินาที ถึงเริ่มนับ GUI แว็บ (กัน GUI ของสคริปต์เอง)
+FAILSAFE_BEDROCK_CHECK_SECONDS = 1.0  # ตรวจ bedrock รอบตัวทุกกี่วินาที
+FAILSAFE_BEDROCK_MIN_BLOCKS   = 7     # ต้องเจอ bedrock อย่างน้อยกี่ตำแหน่งจาก 9 จุด (4 ทิศ × เท้า/หัว + เหนือหัว) ถึงถือว่า "โดนล้อม"
+                                      # (ฟาร์มที่อยู่ติดขอบ bedrock ตามปกติจะเจอแค่ 1-3 จุด)
+
+# --- Input: ให้คลิกซ้ายค้างทำงานต่อเนื่อง ---
+ATTACK_REASSERT_INTERVAL = 0.5   # กดคลิกซ้ายค้างซ้ำทุกกี่วินาทีระหว่างเดิน (กันสถานะปุ่มหลุดเงียบ ๆ)
+INPUT_MONITOR_ENABLED    = True  # แจ้งเตือนเมื่อเมาส์ไม่ถูกจับ/หน้าต่างเกมไม่ active ระหว่างฟาร์ม
+
 # --- Sensors / Watchdog / Metrics ---
 SENSOR_POLL_INTERVAL   = 0.05   # poller อ่านตำแหน่งทุกกี่วินาที
 SENSOR_MAX_AGE         = 0.3    # cache เก่ากว่านี้ให้อ่านตรงแทน

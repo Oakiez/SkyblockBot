@@ -12,7 +12,7 @@ from farm.config import (
     PAUSE_KEY, START_STOP_KEY,
     STUCK_CHECK_INTERVAL, STUCK_CHECK_THRESHOLD, STUCK_CHECK_COUNT, STEP_END_DELAY,
     AUTO_UNPAUSE_SECONDS, AMOUNT_OF_PESTS, SCREENSHOT_INTERVAL,
-    PEST_CHECK_INTERVAL, OUTFIT_WAIT_TIMEOUT, DEBUG_TIMING, CHATLOG_ENABLED, SPRAY_EVERY_SECONDS,
+    PEST_CHECK_INTERVAL, OUTFIT_WAIT_TIMEOUT, DEBUG_TIMING, CHATLOG_ENABLED, ATTACK_REASSERT_INTERVAL, SPRAY_EVERY_SECONDS,
     BUFF_EVERY_SECONDS, BUFF_RETRY_SECONDS,
 )
 from farm.profiles import load_profile
@@ -30,7 +30,7 @@ from farm.recovery import (
     check_for_pest_spawn_message, check_for_pest_cooldown_message,
     check_server_change,
 )
-from farm import sensors, watchdog, metrics, chatlog
+from farm import sensors, watchdog, metrics, chatlog, failsafe
 import farm.state as state
 
 
@@ -190,6 +190,7 @@ def harvest_direction(direction_data: dict, movement_num: int, profile: dict) ->
 
     last_check      = time.time()
     last_pest_check = time.time()
+    last_attack     = time.time()
     was_changing    = False
 
     while state.is_running:
@@ -241,6 +242,11 @@ def harvest_direction(direction_data: dict, movement_num: int, profile: dict) ->
             last_check      = now
             last_inv_change = now
             last_inventory  = None
+
+        # --- กดคลิกซ้ายค้างซ้ำเป็นระยะ: สถานะปุ่มอาจหลุดเงียบ ๆ (เช่นหลังปิด GUI) แล้วบอทไม่รู้ ---
+        if now - last_attack >= ATTACK_REASSERT_INTERVAL and not state.paused:
+            ms.player_press_attack(True)
+            last_attack = now
 
         # --- pause ---
         pause_duration = check_pause()
@@ -387,6 +393,7 @@ def auto_farm(profile_name: str):
     threading.Thread(target=event_loop, daemon=True).start()
     sensors.start()
     watchdog.start()
+    failsafe.start()
     if CHATLOG_ENABLED:
         ok = chatlog.start([
             check_for_restart_message, check_for_limbo_message,
