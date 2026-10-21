@@ -14,13 +14,16 @@ import threading
 import time
 
 from system.lib.java import eval_pyjinn_script as eps
-from farm.config import TAB_BRIDGE_INTERVAL_MS
+from farm.config import (
+    TAB_BRIDGE_INTERVAL_MS, AUTO_REGRAB_MOUSE, REGRAB_STABLE_FRAMES,
+    AUTO_ATTACK_UNFOCUSED, ATTACK_TICK_MS,
+)
 
 _latest = None        # (count, plots)
 _latest_t = 0.0
 _connected = False
 _started = False
-_input = {"grab": None, "active": None, "screen_frames": 0}   # สถานะเมาส์/หน้าต่างล่าสุดจากเกม (None = ไม่รู้)
+_input = {"grab": None, "active": None, "screen_frames": 0, "regrabs": 0, "err": "", "attacks": 0}   # สถานะเมาส์/หน้าต่างล่าสุดจากเกม (None = ไม่รู้)
 
 
 def parse_tab_lines(lines):
@@ -53,6 +56,21 @@ def screen_frames() -> int:
     return _input["screen_frames"]
 
 
+def regrab_info():
+    """(จำนวนครั้งที่สั่ง grabMouse, error ล่าสุดจากสคริปต์ในเกม)"""
+    return _input["regrabs"], _input["err"]
+
+
+def grab_changed_at() -> float:
+    """เวลาล่าสุดที่เมาส์เปลี่ยนสถานะจับ/ปล่อย (ตอนนั้นเกมรีเซ็ตปุ่มที่กดค้างทั้งหมด)"""
+    return _input.get("grab_changed_t", 0.0)
+
+
+def attack_count() -> int:
+    """จำนวนครั้งที่สคริปต์ในเกมทุบบล็อกแทนตอนเมาส์ไม่ถูกจับ"""
+    return _input["attacks"]
+
+
 def input_state():
     """(mouse_grabbed, window_active) ล่าสุด แต่ละค่าเป็น True/False/None(ไม่รู้)"""
     return _input["grab"], _input["active"]
@@ -74,7 +92,22 @@ def _reader(server):
                 _latest = parse_tab_lines(buf)
                 _latest_t = time.time()
             elif line.startswith("GRAB:"):
-                _input["grab"] = {"1": True, "0": False}.get(line[5:])
+                g = {"1": True, "0": False}.get(line[5:])
+                if g is not None and g != _input["grab"]:
+                    _input["grab_changed_t"] = time.time()
+                _input["grab"] = g
+            elif line.startswith("ATTACKS:"):
+                try:
+                    _input["attacks"] = int(line[8:])
+                except ValueError:
+                    pass
+            elif line.startswith("REGRABS:"):
+                try:
+                    _input["regrabs"] = int(line[8:])
+                except ValueError:
+                    pass
+            elif line.startswith("ERR:"):
+                _input["err"] = line[4:]
             elif line.startswith("SCREENFRAMES:"):
                 try:
                     _input["screen_frames"] = int(line[13:])
@@ -109,15 +142,43 @@ Socket = JavaClass("java.net.Socket")
 BufferedWriter = JavaClass("java.io.BufferedWriter")
 OutputStreamWriter = JavaClass("java.io.OutputStreamWriter")
 StandardCharsets = JavaClass("java.nio.charset.StandardCharsets")
+InteractionHand = JavaClass("net.minecraft.world.InteractionHand")
 
 sock = Socket("127.0.0.1", """ + str(port) + r""")
 writer = BufferedWriter(OutputStreamWriter(sock.getOutputStream(), StandardCharsets.UTF_8))
 last = {"t": 0}
-counts = {"screen": 0}
+counts = {"screen": 0, "ungrabbed": 0, "regrabs": 0, "err": "", "attacks": 0, "atk_t": 0}
 
 def frame(_):
+    if """ + ("True" if AUTO_REGRAB_MOUSE else "False") + r""":
+        try:
+            if mc.gui.screen() is None and mc.isWindowActive() and not mc.mouseHandler.isMouseGrabbed():
+                counts["ungrabbed"] += 1
+                if counts["ungrabbed"] >= """ + str(int(REGRAB_STABLE_FRAMES)) + r""":
+                    mc.mouseHandler.grabMouse()
+                    counts["regrabs"] += 1
+                    counts["ungrabbed"] = 0
+            else:
+                counts["ungrabbed"] = 0
+        except Exception as e:
+            counts["err"] = "regrab: " + str(e)
+    if """ + ("True" if AUTO_ATTACK_UNFOCUSED else "False") + r""":
+        try:
+            if mc.gui.screen() is None and not mc.mouseHandler.isMouseGrabbed() and mc.options.keyAttack.isDown():
+                t = System.currentTimeMillis()
+                if t - counts["atk_t"] >= """ + str(int(ATTACK_TICK_MS)) + r""":
+                    counts["atk_t"] = t
+                    hr = mc.hitResult
+                    if hr is not None and hr.getType().name() == "BLOCK":
+                        bp = hr.getBlockPos()
+                        if not mc.level.getBlockState(bp).isAir():
+                            if mc.gameMode.continueDestroyBlock(bp, hr.getDirection()):
+                                mc.player.swing(InteractionHand.MAIN_HAND)
+                                counts["attacks"] += 1
+        except Exception as e:
+            counts["err"] = "attack: " + str(e)
     try:
-        if mc.screen is not None:
+        if mc.gui.screen() is not None:
             counts["screen"] += 1
     except Exception as e:
         pass
@@ -147,6 +208,9 @@ def frame(_):
             a = "1" if mc.isWindowActive() else "0"
         except Exception as e:
             pass
+        writer.write("ATTACKS:" + str(counts["attacks"]) + "\n")
+        writer.write("REGRABS:" + str(counts["regrabs"]) + "\n")
+        writer.write("ERR:" + counts["err"].replace("\n", " ") + "\n")
         writer.write("SCREENFRAMES:" + str(counts["screen"]) + "\n")
         writer.write("GRAB:" + g + "\n")
         writer.write("ACTIVE:" + a + "\n")

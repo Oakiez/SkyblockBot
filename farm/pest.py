@@ -16,10 +16,10 @@ from farm import metrics, sensors, tab_bridge
 from farm.config import (
     AMOUNT_OF_PESTS, FLY_HEIGHT, PEST_PLOT_TIMEOUT, VACUUM_SLOT,
     ENTITY_SCAN_INTERVAL, ENTITY_SCAN_RANGE, PLOT_TP_SETTLE, PLOT_LAND_SNEAK,
-    PEST_CHECK_INTERVAL, TABLIST_SLOW_WARN, TAB_BRIDGE_MAX_AGE,
+    PEST_CHECK_INTERVAL, TABLIST_SLOW_WARN, TAB_BRIDGE_MAX_AGE, FARM_TOOL_SLOT,
     DEBUG_TIMING, PEST_USE_WARP, WARP_SLOT, WARP_MIN_DISTANCE, WARP_MAX_PER_PEST,
     WARP_SELECT_DELAY, WARP_SETTLE_TIMEOUT, VACUUM_REACH, VACUUM_TICK,
-    PEST_APPEAR_TIMEOUT,
+    PEST_APPEAR_TIMEOUT, PEST_PROGRESS_EXTEND, PEST_PLOT_MAX_SECONDS,
 )
 from farm.garden import PLOT_CENTERS
 from farm.utils import (
@@ -261,6 +261,11 @@ def vacuum_all_silverfish(deadline: float = None):
     ms.player_inventory_select_slot(VACUUM_SLOT)
     time.sleep(0.05)
 
+    # เวลาต่อ plot ไม่ตายตัว: ฆ่าได้ทีละตัวก็ต่อเวลาให้ (ไม่งั้นตัวสุดท้ายถูกตัดทิ้ง) แต่ไม่เกินเพดาน
+    started = time.time()
+    hard_deadline = started + PEST_PLOT_MAX_SECONDS
+    kills = 0
+
     while state.is_running:
         if deadline and time.time() > deadline:
             cecho("⏱️ Plot timeout! Skipping remaining pests...", WARN)
@@ -272,7 +277,11 @@ def vacuum_all_silverfish(deadline: float = None):
         p = ms.player_position()
         closest = min(sfs, key=lambda e: math.dist(p, e.position))
         chase = _chase_with_warp if PEST_USE_WARP else _vacuum_single_silverfish
-        if not chase(closest, deadline=deadline):
+        if chase(closest, deadline=deadline):
+            kills += 1
+            if deadline:
+                deadline = min(hard_deadline, max(deadline, time.time() + PEST_PROGRESS_EXTEND))
+        else:
             cecho("[Vacuum] Skipping unreachable silverfish...", WARN)
 
     release_all_keys()
@@ -365,6 +374,8 @@ def pest_cycle() -> bool:
         state.cycling_pests = False
         state.pending_pest_plots.clear()
         state.pest_alive_hint = 0
+        release_all_keys()
+        ms.player_inventory_select_slot(FARM_TOOL_SLOT)
 
     return True
 

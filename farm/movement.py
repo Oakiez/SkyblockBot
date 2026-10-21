@@ -66,6 +66,20 @@ def release_all_keys():
         fn(False)
 
 
+def hold_movement(direction: str, hold_forward: bool = False):
+    """กดปุ่มเดินของทิศนี้ซ้ำ (ไม่ปล่อยก่อน) ใช้ยืนยันสถานะปุ่มระหว่างเดิน"""
+    if hold_forward:
+        ms.player_press_forward(True)
+    key_map = {
+        "left": ms.player_press_left,
+        "right": ms.player_press_right,
+        "forward": ms.player_press_forward,
+        "backward": ms.player_press_backward,
+    }
+    if direction in key_map:
+        key_map[direction](True)
+
+
 def start_movement(direction: str, hold_forward: bool = False):
     """เริ่มเดินไปทิศทางที่กำหนด"""
     stop_movement_only()

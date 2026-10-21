@@ -12,14 +12,14 @@ from farm.config import (
     PAUSE_KEY, START_STOP_KEY,
     STUCK_CHECK_INTERVAL, STUCK_CHECK_THRESHOLD, STUCK_CHECK_COUNT, STEP_END_DELAY,
     AUTO_UNPAUSE_SECONDS, AMOUNT_OF_PESTS, SCREENSHOT_INTERVAL,
-    PEST_CHECK_INTERVAL, OUTFIT_WAIT_TIMEOUT, DEBUG_TIMING, CHATLOG_ENABLED, ATTACK_REASSERT_INTERVAL, SPRAY_EVERY_SECONDS,
-    BUFF_EVERY_SECONDS, BUFF_RETRY_SECONDS,
+    PEST_CHECK_INTERVAL, OUTFIT_WAIT_TIMEOUT, DEBUG_TIMING, CHATLOG_ENABLED, ATTACK_REASSERT_INTERVAL, FARM_TOOL_SLOT, REFOCUS_GRACE_SECONDS, SPRAY_EVERY_SECONDS,
+    BUFF_EVERY_SECONDS, BUFF_RETRY_SECONDS, MAINTENANCE_CHECK_INTERVAL,
 )
 from farm.profiles import load_profile
 from farm.buff import get_buff
 from farm.utils import cecho, SUCCESS, WARN, ERROR, DETAIL, GOLD, AQUA, wait_until
 from farm.movement import (
-    stop_all_movement, stop_movement_only, start_movement,
+    stop_all_movement, stop_movement_only, start_movement, hold_movement,
     smooth_look_at, fly_to_start_position, warp_to_garden_and_land, land_if_flying,
     release_all_keys,
 )
@@ -30,7 +30,8 @@ from farm.recovery import (
     check_for_pest_spawn_message, check_for_pest_cooldown_message,
     check_server_change,
 )
-from farm import sensors, watchdog, metrics, chatlog, failsafe
+from farm import sensors, watchdog, metrics, chatlog, failsafe, tab_bridge
+from farm.actions import restore_farm_state
 import farm.state as state
 
 
@@ -106,33 +107,34 @@ def check_pause() -> float:
 # ============================================================
 
 def initialize_farm(profile: dict):
+    """ลำดับตอนเริ่ม: หันหน้า → setspawn → loadout → รับบัฟ → สเปรย์ → (เคลียร์สถานะ) → เริ่มคลิกซ้าย"""
     cecho("🚀 Initializing farm...", GOLD)
+    ms.player_press_attack(False)
     land_if_flying()
+
+    # 1) หันหน้าตามฟาร์ม
+    smooth_look_at(profile["yaw"], profile["pitch"], steps=15, delay=0.03)
+    time.sleep(0.3)
+
+    # 2) setspawn ที่จุดเริ่ม (บัฟ/สเปรย์จะวาร์ปกลับมาที่นี่)
+    cecho("📍 Setting spawn...", DETAIL)
+    ms.execute("/setspawn")
+    time.sleep(0.3)
+
+    # 3) loadout: pest เกิดค้างอยู่แล้ว → Farm ไม่งั้น Pest (รอ pest เกิด)
     state.current_outfit_slot = None  # บังคับสลับใหม่เสมอ เผื่อ loadout จริงต่างจากที่จำไว้
-    # ถ้า pest เกิดค้างอยู่แล้วตอนกดเริ่ม (Alive > 0) ใช้ชุดฟาร์ม ไม่งั้นใช้ชุด pest (รอ pest เกิด)
     alive, _ = sensors.pest_info_wait(timeout=2.0)
     if alive > 0:
         cecho(f"🐛 {alive} pest(s) already alive → Farm loadout", WARN)
         switch_to_farming_outfit()
     else:
         switch_to_pest_outfit()
-    smooth_look_at(profile["yaw"], profile["pitch"], steps=15, delay=0.03)
-    time.sleep(0.5)
-    cecho("📍 Setting spawn...", DETAIL)
-    ms.execute("/setspawnlocation")
-    time.sleep(0.1)
-    ms.player_inventory_select_slot(0)
-    time.sleep(0.1)
-    for i in range(3, 0, -1):
-        cecho(f"🚜 Starting in {i}...", GOLD)
-        time.sleep(1)
-    # ปล่อยแล้วกดซ้ายใหม่ ต้องเป็นขั้นสุดท้าย หลังเลือก loadout และปิดหน้าจอครบแล้ว
-    ms.player_press_attack(False)
-    time.sleep(0.1)
-    ms.player_inventory_select_slot(0)
-    time.sleep(0.1)
-    ms.player_press_attack(True)
-    time.sleep(0.1)
+
+    # 4-5) รับบัฟ + สเปรย์ (ครั้งแรกถึงเวลาเสมอ) แล้ววาร์ปกลับจุด setspawn
+    _buff_and_spray(profile)
+
+    # 6) เคลียร์สถานะ: ปล่อยปุ่ม/ปิด GUI/ถือ hoe/หันกล้อง แล้วกดคลิกซ้ายเป็นขั้นสุดท้าย
+    restore_farm_state(profile, "start")
     state.start_time = time.time()
     cecho("✅ Ready! (left click held)", SUCCESS)
 
@@ -173,7 +175,7 @@ def harvest_direction(direction_data: dict, movement_num: int, profile: dict) ->
     """
     direction = direction_data["direction"]
     arrow = {"left": "←", "right": "→", "forward": "↑", "backward": "↓"}.get(direction, "→")
-    cecho(f"🚜 Move {movement_num}: {direction_data['name']} {arrow}", GOLD)
+    cecho(f"🚜 Move {movement_num}: {direction_data['name']} {arrow}", DETAIL)
 
     last_inventory  = None   # คำนวณเมื่อจำเป็นเท่านั้น (ดู stuck check)
     last_inv_change = time.time()
@@ -191,6 +193,7 @@ def harvest_direction(direction_data: dict, movement_num: int, profile: dict) ->
     last_check      = time.time()
     last_pest_check = time.time()
     last_attack     = time.time()
+    last_maint      = time.time()
     was_changing    = False
 
     while state.is_running:
@@ -200,6 +203,15 @@ def harvest_direction(direction_data: dict, movement_num: int, profile: dict) ->
         if state.watchdog_triggered:
             stop_movement_only()
             return "WATCHDOG"
+
+        # --- ถึงเวลารับบัฟ/สเปรย์ → หยุดกลางเลนไปทำทันที (ไม่ต้องรอจบรอบ) ---
+        if now - last_maint >= MAINTENANCE_CHECK_INTERVAL and not state.spraying_plots and not state.changing_outfit:
+            last_maint = now
+            if _buff_due() or _spray_due(profile):
+                stop_movement_only()
+                cecho("🧪 Buff/spray due — pausing lane...", WARN)
+                ms.execute("/setspawn")       # วาร์ปกลับมาเดินต่อจากจุดนี้
+                return "MAINTENANCE"
 
         # --- Pest check ---
         if now - last_pest_check >= PEST_CHECK_INTERVAL and not state.spraying_plots and not state.flying_to_start:
@@ -245,7 +257,9 @@ def harvest_direction(direction_data: dict, movement_num: int, profile: dict) ->
 
         # --- กดคลิกซ้ายค้างซ้ำเป็นระยะ: สถานะปุ่มอาจหลุดเงียบ ๆ (เช่นหลังปิด GUI) แล้วบอทไม่รู้ ---
         if now - last_attack >= ATTACK_REASSERT_INTERVAL and not state.paused:
+            ms.player_inventory_select_slot(FARM_TOOL_SLOT)
             ms.player_press_attack(True)
+            hold_movement(direction, hold_forward=profile.get("hold_forward", False))   # ปุ่มเดินก็หลุดได้เหมือนกัน
             last_attack = now
 
         # --- pause ---
@@ -275,7 +289,16 @@ def harvest_direction(direction_data: dict, movement_num: int, profile: dict) ->
                     stuck_counter += 1
                 last_inventory = current_inventory
                 if stuck_counter >= STUCK_CHECK_COUNT:
-                    break
+                    # เพิ่งกลับมา focus: เกมรีเซ็ตปุ่มเดินทิ้ง (KeyMapping.setAll ใน grabMouse) ตัวละครเลยหยุด
+                    # ไม่ใช่ชนกำแพง → กดเดินใหม่แล้วเดินเลนเดิมต่อ แทนการข้ามไปเลนถัดไป
+                    if time.time() - tab_bridge.grab_changed_at() < REFOCUS_GRACE_SECONDS:
+                        cecho("↩️ Focus changed — re-pressing keys, continuing same lane", WARN)
+                        ms.player_press_attack(True)
+                        hold_movement(direction, hold_forward=profile.get("hold_forward", False))
+                        stuck_counter = 0
+                        last_inventory = None
+                    else:
+                        break
             else:
                 stuck_counter  = 0
                 last_inventory = None
@@ -440,7 +463,14 @@ def auto_farm(profile_name: str):
                     state.watchdog_triggered = False
                     time.sleep(3)  # รอ /warp garden เสร็จ
                     warp_to_garden_and_land()
+                    restore_farm_state(profile, "watchdog")
                     pattern_pos = 0
+                    continue
+
+                if result == "MAINTENANCE":
+                    _buff_and_spray(profile)          # วาร์ปกลับจุด /setspawn กลางเลนเองตอนจบ
+                    restore_farm_state(profile, "after buff/spray")
+                    cecho(f"▶️ Resuming at step {pattern_pos + 1}...", SUCCESS)
                     continue
 
                 if result == "PEST_INTERRUPT":
@@ -449,13 +479,10 @@ def auto_farm(profile_name: str):
                     with state.in_mode(state.Mode.PEST):
                         pest_cycle()
                     state.clear_events()
-                    ms.player_press_attack(False)
                     cecho("🔙 Returning to saved position...", DETAIL)
                     warp_to_garden_and_land()
                     switch_to_farming_outfit()
-                    ms.player_inventory_select_slot(0)
-                    time.sleep(0.1)
-                    ms.player_press_attack(True)
+                    restore_farm_state(profile, "after pest clearing")
                     cecho(f"▶️ Resuming at step {pattern_pos + 1}...", SUCCESS)
                     continue
 
@@ -488,14 +515,9 @@ def auto_farm(profile_name: str):
 
             _buff_and_spray(profile)
 
-            time.sleep(0.1)
-            ms.player_inventory_select_slot(0)
-            time.sleep(0.1)
-            ms.player_press_attack(True)
-            time.sleep(0.2)
-
             cecho("└───────────────────────────────\n", DETAIL)
             sell_items_to_npc()
+            restore_farm_state(profile, "end of round")
             metrics.record("round", time.time() - round_started)
             cecho(f"🎉 Round {state.round_count} of '{profile_name}' complete!", GOLD)
             time.sleep(1)

@@ -31,6 +31,17 @@ def strip_color_codes(text: str) -> str:
     return re.sub(r"§[0-9a-fk-or]", "", text)
 
 
+_QUIET_COLORS = ("gray", "aqua")   # DETAIL, AQUA = ข้อความรายละเอียด
+
+
+def _chat_quiet() -> bool:
+    try:
+        from farm.config import CHAT_QUIET
+        return CHAT_QUIET
+    except Exception:
+        return False
+
+
 def cecho(msg: str, color: str = "white"):
     """
     echo ที่เรียกได้จาก background thread พร้อมสีข้อความ
@@ -42,6 +53,8 @@ def cecho(msg: str, color: str = "white"):
         cecho("🚜 Farming...", "gold")
         cecho("│ info", "gray")
     """
+    if color in _QUIET_COLORS and _chat_quiet():
+        return
     with render_loop:
         ms.echo_json([{"text": msg, "color": color}])
 

@@ -16,7 +16,8 @@ from system.lib import minescript as ms
 from farm.config import (
     FAILSAFE_ENABLED, FAILSAFE_JUMP_BLOCKS, FAILSAFE_SCREEN_POLLS,
     FAILSAFE_BEDROCK_CHECK_SECONDS, FAILSAFE_BEDROCK_MIN_BLOCKS,
-    FAILSAFE_ROTATION_DEGREES, FAILSAFE_GRACE_SECONDS,
+    FAILSAFE_ROTATION_DEGREES, FAILSAFE_GRACE_SECONDS, FAILSAFE_MAX_GAP_SECONDS,
+    FAILSAFE_GUI_ENABLED,
 )
 from farm.utils import cecho, ERROR, WARN
 from farm.movement import release_all_keys, stop_all_movement
@@ -87,8 +88,8 @@ def _active() -> bool:
 def _loop():
     prev_pos = None
     prev_ori = None
+    prev_t = 0.0
     screen_polls = 0
-    last_bedrock_check = 0.0
     active_since = None
     base_frames = 0
     while True:
@@ -103,6 +104,11 @@ def _loop():
             if state.failsafe_reason:
                 state.failsafe_reason = ""   # เริ่มรอบใหม่หลังผู้เล่นกดเริ่มเอง
 
+            now = time.time()
+            if prev_pos is not None and now - prev_t > FAILSAFE_MAX_GAP_SECONDS:
+                prev_pos, prev_ori = None, None    # loop สะดุด (เช่นรอ API) ตำแหน่งเก่าเกินไปจะเทียบไม่ได้ เริ่มวัดใหม่
+            prev_t = now
+
             pos = sensors.position()
             if teleport_detected(prev_pos, pos, FAILSAFE_JUMP_BLOCKS):
                 trigger(f"ถูกวาร์ป/ดึงตำแหน่งผิดปกติ ({math.dist(prev_pos, pos):.1f} บล็อก)")
@@ -116,6 +122,8 @@ def _loop():
             prev_ori = ori
 
             # GUI ที่แว็บสั้น ๆ (อาจสั้นกว่ารอบตรวจ 0.1 วินาที): นับจากเฟรมในเกมผ่าน bridge
+            if not FAILSAFE_GUI_ENABLED:
+                continue
             frames = tab_bridge.screen_frames()
             if time.time() - active_since < FAILSAFE_GRACE_SECONDS:
                 base_frames = frames          # ช่วงเพิ่งกลับเข้าโหมดฟาร์ม: ยังไม่นับ (GUI ของสคริปต์เองอาจเพิ่งปิด)
@@ -129,12 +137,20 @@ def _loop():
                 trigger(f"มีหน้าจอ GUI เปิดโดยไม่ได้สั่ง ({name})")
                 continue
 
-            now = time.time()
-            if now - last_bedrock_check >= FAILSAFE_BEDROCK_CHECK_SECONDS:
-                last_bedrock_check = now
-                names = ms.getblocklist(enclosure_positions(pos))
-                if count_bedrock(names) >= FAILSAFE_BEDROCK_MIN_BLOCKS:
-                    trigger("ถูกล้อมด้วย bedrock")
+        except Exception:
+            pass
+
+
+def _bedrock_loop():
+    """แยก thread: getblocklist ช้ากว่ารอบตรวจอื่น ไม่ควรไปดึงรอบตรวจตำแหน่งให้สะดุด"""
+    while True:
+        time.sleep(FAILSAFE_BEDROCK_CHECK_SECONDS)
+        try:
+            if not _active():
+                continue
+            names = ms.getblocklist(enclosure_positions(sensors.position()))
+            if count_bedrock(names) >= FAILSAFE_BEDROCK_MIN_BLOCKS:
+                trigger("ถูกล้อมด้วย bedrock")
         except Exception:
             pass
 
@@ -145,3 +161,4 @@ def start() -> None:
         return
     _started = True
     threading.Thread(target=_loop, daemon=True).start()
+    threading.Thread(target=_bedrock_loop, daemon=True).start()

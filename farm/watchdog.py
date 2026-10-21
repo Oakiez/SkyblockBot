@@ -28,13 +28,20 @@ def _active() -> bool:
     )
 
 
+_bad_input_checks = 0
+
+
 def _check_input(last):
-    """บันทึก/เตือนเมื่อสถานะเมาส์หรือหน้าต่างเกมเปลี่ยนระหว่างฟาร์ม (สาเหตุที่คลิกซ้ายไม่ทำงาน)"""
+    """บันทึก/เตือนเมื่อสถานะเมาส์หรือหน้าต่างเกมเสียต่อเนื่อง (สาเหตุที่คลิกซ้ายไม่ทำงาน)"""
+    global _bad_input_checks
     cur = tab_bridge.input_state()
+    bad = cur[0] is False or cur[1] is False
+    _bad_input_checks = _bad_input_checks + 1 if bad else 0
     if cur != last:
         grab, active = cur
-        if grab is False or active is False:
-            cecho(f"[Input] mouse_grabbed={grab} window_active={active} — คลิกซ้ายอาจไม่ทำงาน คลิกที่หน้าต่างเกมเพื่อคืนการควบคุม", ERROR)
+        if bad and _bad_input_checks >= 2:
+            n, err = tab_bridge.regrab_info()
+            cecho(f"[Input] mouse_grabbed={grab} window_active={active} regrabs={n} attacks={tab_bridge.attack_count()} err='{err}' — คลิกซ้ายอาจไม่ทำงาน", ERROR)
         elif last is not None and (last[0] is False or last[1] is False):
             cecho(f"[Input] back to normal (mouse_grabbed={grab} window_active={active})", WARN)
     return cur

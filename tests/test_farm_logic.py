@@ -189,6 +189,56 @@ class BridgeAndChatlogTests(unittest.TestCase):
             self.assertEqual(got, ["YUCK! 6 Pest have spawned in Plot - 4!"])   # ไม่เอาของเก่า ไม่เอาบรรทัดที่ไม่ใช่แชท
 
 
+class RefocusTests(unittest.TestCase):
+    def test_hold_movement_presses_without_release(self):
+        import farm.movement as mv
+
+        calls = []
+        mv.ms.player_press_right.side_effect = lambda v: calls.append(("right", v))
+        mv.ms.player_press_left.side_effect = lambda v: calls.append(("left", v))
+        try:
+            mv.hold_movement("right")
+        finally:
+            mv.ms.player_press_right.side_effect = None
+            mv.ms.player_press_left.side_effect = None
+        self.assertEqual(calls, [("right", True)])   # ไม่มีการปล่อยปุ่ม (False) แทรก
+
+    def test_grab_change_timestamp(self):
+        from farm import tab_bridge
+
+        tab_bridge._input["grab"] = False
+        tab_bridge._input["grab_changed_t"] = 0.0
+        self.assertEqual(tab_bridge.grab_changed_at(), 0.0)
+
+
+class RestoreFarmStateTests(unittest.TestCase):
+    def test_restore_order_and_final_attack(self):
+        import farm.actions as act
+
+        calls = []
+        orig = {n: getattr(act, n) for n in ("release_all_keys", "smooth_look_at", "wait_for_no_screen")}
+        act.release_all_keys = lambda: calls.append("release_all")
+        act.smooth_look_at = lambda y, p, steps=0, delay=0: calls.append(("look", y, p))
+        act.wait_for_no_screen = lambda timeout=0: calls.append("wait_no_screen")
+        act.ms.screen_name.return_value = "SomeScreen"
+        act.ms.player_inventory_select_slot.side_effect = lambda n: calls.append(("slot", n))
+        act.ms.player_press_attack.side_effect = lambda v: calls.append(("attack", v))
+        act.lib_inv.close.side_effect = lambda: calls.append("close_gui")
+        try:
+            act.restore_farm_state({"yaw": 123.96, "pitch": 0})
+        finally:
+            for n, f in orig.items():
+                setattr(act, n, f)
+            act.ms.player_inventory_select_slot.side_effect = None
+            act.ms.player_press_attack.side_effect = None
+            act.lib_inv.close.side_effect = None
+            act.ms.screen_name.return_value = None
+        self.assertEqual(
+            calls,
+            ["release_all", "close_gui", "wait_no_screen", ("slot", 0), ("look", 123.96, 0), ("attack", True)],
+        )
+
+
 class PestCycleLoadoutTests(unittest.TestCase):
     def test_switches_to_farm_before_first_plot(self):
         import farm.inventory as inv
