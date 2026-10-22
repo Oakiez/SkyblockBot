@@ -1,134 +1,281 @@
-# SkyblockBot
+<div align="center">
 
-บอทฟาร์ม Hypixel SkyBlock Garden สำหรับ [Minescript](https://minescript.net) เขียนด้วย Python
-เดินฟาร์มตาม pattern ของพืชแต่ละชนิด กำจัด pest ด้วย AOTV + Vacuum รับบัฟ/สเปรย์ตามเวลา และสลับ loadout อัตโนมัติ
+# 🌾 SkyblockBot
 
-> ⚠️ **ความเสี่ยง:** การใช้สคริปต์ automation บน Hypixel ผิดกฎของเซิร์ฟเวอร์ และบัญชีอาจถูกแบนได้
+**บอทฟาร์ม Hypixel SkyBlock Garden สำหรับ [Minescript](https://minescript.net)**
+
+เดินฟาร์มตาม pattern · กำจัด pest ด้วย AOTV + Vacuum · รับบัฟ/สเปรย์ตามเวลา · สลับ loadout อัตโนมัติ
+
+![Minecraft](https://img.shields.io/badge/Minecraft-26.2-62B47A?style=flat-square)
+![Minescript](https://img.shields.io/badge/Minescript-5.0-4A90D9?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white)
+![Tests](https://img.shields.io/badge/offline%20tests-41%20passing-success?style=flat-square)
+
+</div>
+
+> [!WARNING]
+> การใช้สคริปต์ automation บน Hypixel **ผิดกฎของเซิร์ฟเวอร์ และบัญชีอาจถูกแบนได้**
 > โปรเจกต์นี้ทำขึ้นเพื่อศึกษาและใช้ส่วนตัว ผู้ใช้รับผิดชอบความเสี่ยงเองทั้งหมด
 > โปรเจกต์นี้ไม่มีและจะไม่เพิ่มฟีเจอร์ซ่อนตัวจากการตรวจจับ
 
-## ความต้องการ
+---
+
+## 📑 สารบัญ
+
+- [ฟีเจอร์](#-ฟีเจอร์)
+- [ความต้องการ](#-ความต้องการ)
+- [ติดตั้ง](#-ติดตั้ง)
+- [วิธีใช้](#-วิธีใช้)
+- [การทำงาน](#-การทำงาน)
+- [การตั้งค่า](#%EF%B8%8F-การตั้งค่า)
+- [Failsafe](#%EF%B8%8F-failsafe)
+- [โครงสร้างโปรเจกต์](#-โครงสร้างโปรเจกต์)
+- [ทดสอบ](#-ทดสอบ)
+- [ข้อจำกัด](#-ข้อจำกัด)
+
+---
+
+## ✨ ฟีเจอร์
+
+| | |
+|---|---|
+| 🚜 **ฟาร์มตาม pattern** | 11 profile (wheat, potato, carrot, wart, cane, cocoa, melon, pumpkin, cactus, mushroom, flower) เดินจนชนกำแพงแล้วเปลี่ยนเลน |
+| 🐛 **กำจัด pest อัตโนมัติ** | จับข้อความ pest เกิดได้ทันที → สลับชุด Farm → บินพ้นเพดาน → วาร์ปด้วย AOTV → ดูดด้วย Vacuum → กลับมาเดินเลนเดิมต่อ |
+| 🧪 **บัฟและสเปรย์** | รับบัฟ Pesthunter Phillip ทุก 30 นาที และสเปรย์ plot ทุก 55 นาที แยกนาฬิกา หยุดกลางเลนไปทำได้ทันทีที่ครบเวลา |
+| 👔 **สลับ loadout** | ใช้ `/ld` สลับระหว่างชุด Farm (Farming Fortune สูง) กับชุด Pest (อัตราเกิด pest สูง) ตามจังหวะ |
+| 🖱️ **ฟาร์มต่อได้แม้ไม่ focus** | สลับไปหน้าต่างอื่นได้ บอทยังทุบพืชต่อและไม่เปลี่ยนเลนผิดเมื่อกลับมา |
+| 🛡️ **Failsafe** | เจอเหตุผิดปกติ (ถูกวาร์ป/ถูกหันหัว/ถูกขัง bedrock) จะหยุดบอทให้ผู้เล่นมาดูเอง |
+| 🩺 **Watchdog** | ค้างเกิน 30 วินาที จะกู้คืนและเริ่มรอบใหม่ |
+| 💰 **ขายของ** | ขายไอเทมใน `SELL_ITEMS` ผ่าน `/trades` ท้ายแต่ละรอบ |
+
+---
+
+## 📋 ความต้องการ
 
 | รายการ | ที่ทดสอบด้วย |
 |---|---|
 | Minecraft (Fabric) | 26.2 |
 | Minescript | 5.0 |
 | Python | 3.13 (ตั้งใน `config.txt` ของ Minescript) |
-| Mod เสริม | SkyHanni (ข้อความ pest cooldown), Skyblocker |
+| Mod เสริม | [SkyHanni](https://github.com/hannibal002/SkyHanni) (ข้อความ pest cooldown) |
 
-ไม่ต้องติดตั้ง mappings (`\install_mappings`) — โค้ดไม่ใช้ `minescript_plus` แล้ว
-การคลิกในเมนูใช้ `system/lib/lib_inv.py` ที่มากับ Minescript
+> [!NOTE]
+> ไม่ต้องติดตั้ง mappings (`\install_mappings`) โค้ดอ่าน/คลิกเกมผ่าน Pyjinn และ `system/lib/lib_inv.py` ที่มากับ Minescript
 
-## ติดตั้ง
+---
 
-1. วางไฟล์ลงในโฟลเดอร์ `minescript/` ของโปรไฟล์ Minecraft
-   ```
+## 📦 ติดตั้ง
+
+1. **วางไฟล์** ลงในโฟลเดอร์ `minescript/` ของโปรไฟล์ Minecraft
+
+   ```text
    minescript/
-   ├── farm.py
-   ├── villager.py
-   ├── farm/
-   └── tests/
+   ├── farm.py          ← entry point
+   ├── villager.py      ← รับบัฟอย่างเดียว
+   ├── farm/            ← ตัวบอท
+   └── tests/           ← เทสต์ออฟไลน์
    ```
-2. สร้างไฟล์ `farm/secrets_local.py` (ไฟล์นี้ถูก `.gitignore` ไว้ ห้าม commit)
+
+2. **(ไม่บังคับ) สร้าง `farm/secrets_local.py`** ไฟล์นี้อยู่ใน `.gitignore` ห้าม commit
+
    ```python
-   DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/..."   # ไม่บังคับ
+   DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/..."
    ```
-3. ตั้งค่า hotbar และ loadout ให้ตรงกับ [การตั้งค่า](#การตั้งค่า) ด้านล่าง
 
-## วิธีใช้
+3. **จัด hotbar และ loadout** ให้ตรงกับค่าใน [การตั้งค่า](#%EF%B8%8F-การตั้งค่า)
 
-พิมพ์ในแชทเกม:
+   | Hotbar slot | ไอเทม |
+   |:---:|---|
+   | 0 | เครื่องมือฟาร์ม (hoe) |
+   | 1 | Aspect of the Void (AOTV) |
+   | 2 | Vacuum |
+   | 3 | Sprayonator |
 
-```
-\farm              # ดูรายชื่อ profile
-\farm wheat        # เริ่มบอทด้วย profile wheat
-\villager          # รันตัวรับบัฟอย่างเดียว
+---
+
+## 🎮 วิธีใช้
+
+พิมพ์ในแชทเกม
+
+```text
+\farm              ดูรายชื่อ profile
+\farm wheat        รันบอทด้วย profile wheat
+\villager          รับบัฟอย่างเดียว
 ```
 
 | ปุ่ม | หน้าที่ |
+|:---:|---|
+| <kbd>]</kbd> | เริ่ม / หยุดฟาร์ม |
+| <kbd>[</kbd> | พัก / เล่นต่อ (ปลดพักเองใน 30 วินาที) |
+
+---
+
+## 🔄 การทำงาน
+
+### ตอนกดเริ่ม
+
+```mermaid
+flowchart LR
+    A["กด ]"] --> B[หันหน้าตามฟาร์ม]
+    B --> C["/setspawn"]
+    C --> D[สลับ loadout]
+    D --> E[รับบัฟ]
+    E --> F[สเปรย์ plot]
+    F --> G[คืนสถานะ]
+    G --> H[คลิกซ้าย + เริ่มเดิน]
+```
+
+**คืนสถานะ** (`restore_farm_state`) ทำทุกครั้งหลังจบ action สำคัญ: ปล่อยทุกปุ่ม → ปิด GUI ที่ค้าง → ถือ hoe → หันกล้องตามฟาร์ม → กดคลิกซ้ายเป็นขั้นสุดท้าย
+
+### ระหว่างฟาร์ม
+
+```mermaid
+flowchart TD
+    W[เดินเลนจนชนกำแพง] --> X{เกิดอะไรขึ้น?}
+    X -- ชนกำแพง --> N[เลนถัดไป] --> W
+    X -- pest เกิด ≥ 4 ตัว --> P["หยุด → /setspawn → ชุด Farm<br/>→ บินขึ้น → AOTV + Vacuum"]
+    X -- ครบเวลาบัฟ/สเปรย์ --> M["หยุด → /setspawn<br/>→ รับบัฟ / สเปรย์"]
+    X -- cooldown pest ใกล้หมด --> L[สลับเป็นชุด Pest] --> W
+    P --> R["/warp garden → คืนสถานะ"]
+    M --> R
+    R --> W
+```
+
+| เหตุการณ์ | ตอบสนอง |
 |---|---|
-| `]` | เริ่ม / หยุดฟาร์ม |
-| `[` | พัก / เล่นต่อ (ปลดพักเองใน 30 วินาที) |
+| ข้อความ `N Pest have spawned in Plot - X` | อ่านจาก `logs/latest.log` ทันที ถ้าถึง `AMOUNT_OF_PESTS` จะหยุดไปกำจัด |
+| SkyHanni `Pest spawn cooldown expires in 5s` | สลับเป็นชุด Pest |
+| บัฟครบ 30 นาที / สเปรย์ครบ 55 นาที | หยุดกลางเลนไปทำ แล้ววาร์ปกลับจุดเดิม |
+| ครบ 34 เลน | ขายของ แล้วเริ่มรอบใหม่ |
 
-ปุ่มตั้งได้ที่ `PAUSE_KEY` / `START_STOP_KEY` ใน `farm/config.py`
+---
 
-### Profiles
+## ⚙️ การตั้งค่า
 
-`wheat`, `potato`, `carrot`, `wart`, `cane`, `cocoa`, `melon`, `pumpkin`, `cactus`, `mushroom`, `flower`
-(แต่ละอันกำหนด `pattern`, `yaw`/`pitch`, จุดเริ่ม และ plot ที่จะ spray ใน `farm/profiles.py`)
+ทุกค่าอยู่ที่ **`farm/config.py`** ไฟล์เดียว
 
-## การทำงาน
+<details open>
+<summary><b>Slot และ loadout</b></summary>
 
-1. **เริ่ม (`]`):** ลงพื้นถ้าลอยอยู่ → สลับ loadout (Pest ถ้ายังไม่มี pest, Farm ถ้ามี pest ค้างอยู่) → หันกล้อง → นับถอยหลัง 3 วินาที → คลิกซ้ายค้าง
-2. **ฟาร์ม:** เดินตาม `pattern` ทีละเลนจนชนกำแพง (ตรวจจากการที่ตำแหน่งไม่ขยับ) แล้วเปลี่ยนเลน
-3. **pest เกิด:** อ่านข้อความ `N Pest have spawned in Plot - X` จาก `logs/latest.log`
-   ถ้าจำนวนถึง `AMOUNT_OF_PESTS` จะหยุดทันที `/setspawn` สลับเป็น Farm loadout แล้ว `/plottp` ไปกำจัด
-   - บินขึ้นพ้นเพดาน → วาร์ปด้วย AOTV เข้าใกล้ pest → ดูดด้วย Vacuum
-   - เสร็จแล้ว `/warp garden` กลับมาทำต่อ
-4. **ท้ายรอบ:** ขายของ (`SELL_ITEMS`), รับบัฟ Phillip ทุก ~30 นาที (กดซ้อนไม่ได้), spray ทุก ~55 นาที (แยกนาฬิกากัน)
-5. **Pest cooldown ใกล้หมด:** (SkyHanni แจ้งที่ 5 วินาที) สลับเป็น Pest loadout
+| ค่า | ค่าเริ่มต้น | ความหมาย |
+|---|:---:|---|
+| `FARM_LOADOUT_SLOT` / `PEST_LOADOUT_SLOT` | 15 / 14 | slot ของแต่ละชุดในเมนู `/ld` |
+| `FARM_TOOL_SLOT` | 0 | hotbar ของ hoe |
+| `WARP_SLOT` / `VACUUM_SLOT` | 1 / 2 | hotbar ของ AOTV / Vacuum |
 
-### กลไกเสริม
+</details>
+
+<details>
+<summary><b>Pest</b></summary>
+
+| ค่า | ค่าเริ่มต้น | ความหมาย |
+|---|:---:|---|
+| `AMOUNT_OF_PESTS` | 4 | จำนวน pest ขั้นต่ำที่จะหยุดไปกำจัด |
+| `FLY_HEIGHT` / `FLY_BACKOFF_SECONDS` | 79 / 0.3 | ความสูงที่บินพ้นเพดาน / ถอยหลังก่อนบิน |
+| `WARP_MIN_DISTANCE` | 12 | ไกลกว่านี้ให้วาร์ปเข้าไปก่อน |
+| `PEST_PROGRESS_EXTEND` / `PEST_PLOT_MAX_SECONDS` | 12 / 90 | ต่อเวลาต่อ plot ทุกตัวที่ฆ่าได้ / เพดานเวลา |
+| `PEST_USE_WARP` | `True` | `False` = โหมดบินไล่แบบเดิม |
+
+</details>
+
+<details>
+<summary><b>บัฟและสเปรย์</b></summary>
+
+| ค่า | ค่าเริ่มต้น | ความหมาย |
+|---|:---:|---|
+| `BUFF_EVERY_SECONDS` | 30 นาที 10 วิ | รอบรับบัฟ (กดซ้อนไม่ได้จนกว่าจะหมด) |
+| `BUFF_RETRY_SECONDS` | 120 | รับบัฟพลาด ลองใหม่ใน |
+| `SPRAY_EVERY_SECONDS` | 55 นาที | รอบสเปรย์ |
+| `MAINTENANCE_CHECK_INTERVAL` | 1.0 | ระหว่างเดิน เช็คเวลาทุก |
+
+พิกัด NPC รับบัฟอยู่ต้นไฟล์ `farm/buff.py` ส่วนพิกัดและ pattern ของแต่ละพืชอยู่ใน `farm/profiles.py`
+
+</details>
+
+<details>
+<summary><b>การเดินและ input</b></summary>
+
+| ค่า | ค่าเริ่มต้น | ความหมาย |
+|---|:---:|---|
+| `STUCK_CHECK_INTERVAL` / `STUCK_CHECK_COUNT` | 0.1 / 3 | ความไวการตรวจชนกำแพง |
+| `AUTO_ATTACK_UNFOCUSED` | `True` | ทุบพืชต่อแม้หน้าต่างเกมไม่ได้ focus |
+| `AUTO_REGRAB_MOUSE` | `True` | จับเมาส์คืนเองเมื่อหน้าต่าง active |
+| `REFOCUS_GRACE_SECONDS` | 2.0 | เพิ่งกลับมา focus แล้วหยุด ไม่นับว่าชนกำแพง |
+| `ATTACK_REASSERT_INTERVAL` | 0.5 | กดคลิกซ้าย/ปุ่มเดินซ้ำทุก |
+
+</details>
+
+<details>
+<summary><b>แชทและดีบัก</b></summary>
+
+| ค่า | ค่าเริ่มต้น | ความหมาย |
+|---|:---:|---|
+| `CHAT_QUIET` | `True` | ซ่อนข้อความรายละเอียด เหลือแค่เรื่องสำคัญ |
+| `DEBUG_TIMING` | `False` | แสดงเวลาของแต่ละเลน/plot |
+| `INPUT_MONITOR_ENABLED` | `False` | แสดงสถานะเมาส์/หน้าต่าง `[Input]` |
+| `METRICS_WRITE_CSV` | `False` | เขียนเวลาลง `farm/metrics.csv` |
+
+</details>
+
+---
+
+## 🛡️ Failsafe
+
+`farm/failsafe.py` เฝ้าดูขณะฟาร์ม ถ้าเจอเหตุที่ **เหมือนการตรวจ macro** จะ **หยุดบอททันที** ปล่อยปุ่ม แจ้งเตือนสีแดง แล้วรอผู้เล่นกด <kbd>]</kbd> เมื่อพร้อม
+
+| เหตุที่ตรวจ | เกณฑ์ | ค่าเริ่มต้น |
+|---|---|:---:|
+| ถูกวาร์ป / ดึงตำแหน่ง | ตำแหน่งกระโดดเกิน `FAILSAFE_JUMP_BLOCKS` | ✅ เปิด |
+| ถูกหันหัว | มุมกล้องเปลี่ยนเกิน `FAILSAFE_ROTATION_DEGREES` | ✅ เปิด |
+| ถูกขังกล่อง bedrock | bedrock ≥ `FAILSAFE_BEDROCK_MIN_BLOCKS` จาก 9 จุด | ✅ เปิด |
+| GUI โผล่ที่ไม่ได้สั่ง | ค้างหรือแว็บ | ⛔ ปิด (`FAILSAFE_GUI_ENABLED`) |
+
+> [!IMPORTANT]
+> **ขอบเขตที่ตั้งใจ:** failsafe ตรวจแล้วหยุดเท่านั้น ไม่ตอบสนองการตรวจแทนผู้เล่น ไม่สุ่มพฤติกรรมให้ดูเหมือนคน และไม่ซ่อนว่าเป็นบอท
+
+---
+
+## 🗂️ โครงสร้างโปรเจกต์
 
 | ไฟล์ | หน้าที่ |
 |---|---|
-| `farm/tab_bridge.py` | อ่าน tablist (Alive/Plots) ด้วยสคริปต์ Pyjinn ในเกม เร็วกว่าเรียก Java จาก Python ซึ่งวัดได้ 15–30 วินาทีต่อครั้ง |
-| `farm/chatlog.py` | อ่านแชทจาก `logs/latest.log` เพราะ chat listener ของ Minescript ไม่ส่งข้อความระบบของเซิร์ฟเวอร์มาให้สคริปต์ |
+| `farm.py` | entry point (`\farm <profile>`) |
+| `farm/farm_loop.py` | ลูปหลัก: เริ่ม, เดินเลน, จัดการ pest/บัฟ/สเปรย์ |
+| `farm/profiles.py` | pattern, มุมกล้อง, จุดเริ่ม และ plot สเปรย์ของแต่ละพืช |
+| `farm/pest.py` | หา plot ที่มี pest, บิน, AOTV, Vacuum, สเปรย์ |
+| `farm/buff.py` | เดินไปรับบัฟจาก Phillip |
+| `farm/inventory.py` | สลับ loadout (`/ld`), ขายของ |
+| `farm/actions.py` | `restore_farm_state()` คืนสถานะก่อนกลับไปฟาร์ม |
+| `farm/movement.py` | เดิน, หันกล้อง, บิน, ลงจอด |
+| `farm/tab_bridge.py` | สคริปต์ Pyjinn ในเกม: อ่าน tablist, จับเมาส์คืน, ทุบพืชตอนไม่ focus |
+| `farm/chatlog.py` | อ่านแชทจาก `logs/latest.log` (chat listener ไม่ส่งข้อความของเซิร์ฟเวอร์มา) |
 | `farm/sensors.py` | poller กลาง เก็บตำแหน่ง/จำนวน pest เป็น cache |
-| `farm/watchdog.py` | ถ้าตำแหน่งไม่ขยับ 30 วินาทีขณะฟาร์ม จะปล่อยปุ่ม `/warp garden` แล้วเริ่มรอบใหม่ |
-| `farm/metrics.py` | จับเวลา step/plot/round สรุปตอนหยุดฟาร์ม |
-| `farm/state.py` | state, `Mode` และคิว event (chat → main loop) |
-| `farm/failsafe.py` | ตรวจเหตุผิดปกติที่เหมือนการตรวจ macro แล้วหยุดบอท |
+| `farm/recovery.py` | ตรวจข้อความ pest/cooldown, กู้คืนจาก limbo/restart |
+| `farm/failsafe.py` · `farm/watchdog.py` | หยุดเมื่อผิดปกติ · กู้คืนเมื่อค้าง |
+| `farm/state.py` · `farm/metrics.py` | state, `Mode`, คิว event · จับเวลา |
+| `farm/config.py` | ค่าตั้งทั้งหมด |
 
-## การตั้งค่า
+---
 
-แก้ที่ `farm/config.py` ที่เดียว:
+## 🧪 ทดสอบ
 
-| ค่า | ความหมาย |
-|---|---|
-| `FARM_LOADOUT_SLOT` / `PEST_LOADOUT_SLOT` | slot ในเมนู `/ld` (ตอนนี้ 15 / 14) |
-| `VACUUM_SLOT` / `WARP_SLOT` | hotbar slot ของ Vacuum (2) และ AOTV (1) |
-| `AMOUNT_OF_PESTS` | จำนวน pest ขั้นต่ำที่จะหยุดไปกำจัด (4) |
-| `FLY_HEIGHT` / `FLY_BACKOFF_SECONDS` | ความสูงที่บินพ้นเพดาน / ถอยหลังก่อนบิน |
-| `WARP_MIN_DISTANCE` | ไกลกว่านี้ให้วาร์ปเข้าไปก่อน (ระยะวาร์ปของ AOTV, 12) |
-| `STUCK_CHECK_*` | ความไวการตรวจชนกำแพง |
-| `BUFF_EVERY_SECONDS` / `SPRAY_EVERY_SECONDS` | รอบเวลารับบัฟ / spray |
-| `PEST_USE_WARP` | `False` = กลับไปโหมดบินไล่แบบเดิม |
-| `DEBUG_TIMING` | พิมพ์เวลาของแต่ละ step/plot |
-| `SELL_ITEMS` | ไอเทมที่จะขายใน `/trades` |
-
-พิกัดและ pattern ของแต่ละพืชอยู่ใน `farm/profiles.py`
-พิกัด NPC รับบัฟอยู่ต้นไฟล์ `farm/buff.py`
-
-## Failsafe (หยุดเมื่อเจอเหตุผิดปกติ)
-
-`farm/failsafe.py` เฝ้าดูตอนบอทฟาร์มอยู่ ถ้าเจอเหตุที่ **เหมือนการตรวจ macro** จะ **หยุดบอททันที** ปล่อยปุ่ม แจ้งเตือนสีแดง แล้วรอให้ผู้เล่นตัดสินใจเอง (กด `]` เมื่อพร้อมเริ่มใหม่)
-
-| เหตุที่ตรวจ | เกณฑ์ (ปรับที่ `farm/config.py`) |
-|---|---|
-| ถูกวาร์ป / ดึงตำแหน่ง | ตำแหน่งกระโดดเกิน `FAILSAFE_JUMP_BLOCKS` ในรอบเดียว |
-| ถูกหันหัว | มุมกล้องเปลี่ยนเกิน `FAILSAFE_ROTATION_DEGREES` ที่สคริปต์ไม่ได้สั่ง |
-| GUI โผล่ที่ไม่ได้สั่ง | GUI เปิดต่อเนื่อง หรือแว็บสั้น ๆ (นับเฟรมในเกมผ่าน bridge) |
-| ถูกขังกล่อง bedrock | bedrock อย่างน้อย `FAILSAFE_BEDROCK_MIN_BLOCKS` จาก 9 จุดรอบตัว |
-
-**ขอบเขตที่ตั้งใจ:** โมดูลนี้ตรวจแล้วหยุดเท่านั้น ไม่ตอบสนองการตรวจแทนผู้เล่น ไม่สุ่มพฤติกรรมให้ดูเหมือนคน และไม่ซ่อนว่าเป็นบอท
-
-มีตัวเฝ้าสถานะ input ใน `farm/watchdog.py` ด้วย: ถ้าเมาส์ไม่ถูกจับหรือหน้าต่างเกมไม่ active ระหว่างฟาร์ม จะแจ้งเตือน `[Input] ...` และบอทกดคลิกซ้ายค้างซ้ำทุก `ATTACK_REASSERT_INTERVAL` เผื่อสถานะปุ่มหลุด
-
-## ทดสอบ
-
-ทดสอบ logic ออฟไลน์ได้โดยไม่ต้องเปิดเกม (stub Minescript ไว้):
+ทดสอบ logic ได้โดยไม่ต้องเปิดเกม (stub Minescript ไว้)
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-ครอบคลุม: การ import ทุกโมดูล, garden/profiles, state/event, การตั้งเวลาบัฟ/spray, parser ข้อความ pest, ตัวอ่าน log
-ส่วนการเคลื่อนไหวและการคลิกจริงต้องทดสอบในเกมเท่านั้น
+ครอบคลุม: import ทุกโมดูล, garden/profiles, state/event, ตารางเวลาบัฟ/สเปรย์, parser ข้อความ pest/cooldown, ตัวอ่าน log, failsafe, การคืนสถานะ
 
-## ข้อจำกัดที่ยังมี
+> [!NOTE]
+> การเคลื่อนไหวและการคลิกจริงทดสอบได้ในเกมเท่านั้น
 
-- ไม่มีโมดูลส่ง Discord (config มีค่า `DISCORD_WEBHOOK_URL` ไว้ แต่ยังไม่ได้เชื่อมกับโค้ด)
-- หลังกำจัด pest กลางเลน บอทเริ่ม pattern ใหม่จากต้นเลนเดิม ไม่ได้เดินต่อจากจุดที่หยุด
-- ตัวอ่านแชทและ bridge พึ่งพา path ของ `logs/latest.log` และพฤติกรรมของ Pyjinn ใน Minescript 5.0 อาจใช้ไม่ได้ในเวอร์ชันอื่น
-- ค่าเวลาทั้งหมดปรับตามเครื่องและแล็กของแต่ละคน
+---
+
+## 🚧 ข้อจำกัด
+
+- ยังไม่มีโมดูลส่ง Discord (มีค่า `DISCORD_WEBHOOK_URL` ใน config แต่ยังไม่ได้เชื่อม)
+- เช็คบัฟ/สเปรย์ด้วยนาฬิกาในสคริปต์ ไม่ได้อ่านเวลาที่เหลือจริงจากเกม และนาฬิกาเริ่มใหม่ทุกครั้งที่รัน `\farm`
+- ตัวอ่านแชทและ bridge พึ่งพา path ของ `logs/latest.log` และ Pyjinn ของ Minescript 5.0 / Minecraft 26.2 อาจใช้ไม่ได้ในเวอร์ชันอื่น
+- ถ้าหน้าต่างเกมถูกย่อ (minimize) เกมอาจหยุด render ตัวทุบแทนตอนไม่ focus ก็จะหยุดตาม
+- ค่าเวลาทั้งหมดขึ้นกับเครื่องและแล็กของแต่ละคน

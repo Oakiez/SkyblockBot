@@ -292,7 +292,7 @@ def harvest_direction(direction_data: dict, movement_num: int, profile: dict) ->
                     # เพิ่งกลับมา focus: เกมรีเซ็ตปุ่มเดินทิ้ง (KeyMapping.setAll ใน grabMouse) ตัวละครเลยหยุด
                     # ไม่ใช่ชนกำแพง → กดเดินใหม่แล้วเดินเลนเดิมต่อ แทนการข้ามไปเลนถัดไป
                     if time.time() - tab_bridge.grab_changed_at() < REFOCUS_GRACE_SECONDS:
-                        cecho("↩️ Focus changed — re-pressing keys, continuing same lane", WARN)
+                        cecho("↩️ Focus changed — re-pressing keys, continuing same lane", DETAIL)
                         ms.player_press_attack(True)
                         hold_movement(direction, hold_forward=profile.get("hold_forward", False))
                         stuck_counter = 0
