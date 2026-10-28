@@ -11,17 +11,20 @@ failsafe.py — ตรวจว่ามีเหตุผิดปกติท�
 import math
 import threading
 import time
+from collections import deque
 
 from system.lib import minescript as ms
 from farm.config import (
     FAILSAFE_ENABLED, FAILSAFE_JUMP_BLOCKS, FAILSAFE_SCREEN_POLLS,
     FAILSAFE_BEDROCK_CHECK_SECONDS, FAILSAFE_BEDROCK_MIN_BLOCKS,
     FAILSAFE_ROTATION_DEGREES, FAILSAFE_GRACE_SECONDS, FAILSAFE_MAX_GAP_SECONDS,
-    FAILSAFE_GUI_ENABLED,
+    FAILSAFE_GUI_ENABLED, FAILSAFE_RUBBERBAND_ENABLED, FAILSAFE_HISTORY_SECONDS,
+    FAILSAFE_RUBBERBAND_TOLERANCE, FAILSAFE_RUBBERBAND_MAX_BLOCKS, FAILSAFE_RUBBERBAND_GRACE,
+    FAILSAFE_RUBBERBAND_LIMIT,
 )
 from farm.utils import cecho, ERROR, WARN
 from farm.movement import release_all_keys, stop_all_movement
-from farm import sensors, tab_bridge
+from farm import sensors, tab_bridge, notify
 import farm.state as state
 
 _started = False
@@ -32,6 +35,16 @@ _started = False
 def teleport_detected(prev, cur, threshold: float) -> bool:
     """ตำแหน่งระหว่างสองการอ่านติดกันต่างกันเกิน threshold บล็อก (เดินปกติไม่มีทางเกิน)"""
     return prev is not None and math.dist(prev, cur) > threshold
+
+
+def is_rubber_band(prev, cur, history, tolerance: float, max_blocks: float) -> bool:
+    """ตำแหน่งที่กระโดดนี้เป็นการถูกดึงกลับเพราะเน็ตกระตุก (ไม่ใช่วาร์ปจริง) หรือไม่
+    rubber-band = เซิร์ฟเวอร์ดึงกลับไปจุดที่เพิ่งเดินผ่าน → ตำแหน่งใหม่อยู่ใกล้จุดใดจุดหนึ่งใน history
+    วาร์ปจริง (ถูกย้ายไปที่ใหม่) จะไม่ตรงกับเส้นทางที่เพิ่งเดินและมักไกลกว่ามาก
+    history = ตำแหน่งที่เคยอ่านได้ย้อนหลัง (ไม่ต้องกรองจุด prev ออก มันอยู่ไกลจาก cur เสมอเมื่อกระโดด)"""
+    if prev is None or math.dist(prev, cur) > max_blocks:
+        return False
+    return any(math.dist(p, cur) <= tolerance for p in history)
 
 
 def rotation_jumped(prev, cur, threshold: float) -> bool:
@@ -70,6 +83,7 @@ def trigger(reason: str) -> None:
         stop_all_movement()
     except Exception:
         pass
+    notify.failsafe(reason)   # Discord (thread แยก ไม่หน่วงการหยุด)
     for _ in range(3):
         cecho(f"🛑 FAILSAFE: {reason} — บอทหยุดแล้ว ตรวจสอบด้วยตัวเอง (กด ] เมื่อพร้อมเริ่มใหม่)", ERROR)
 
@@ -92,11 +106,16 @@ def _loop():
     screen_polls = 0
     active_since = None
     base_frames = 0
+    history = deque()        # (เวลา, ตำแหน่ง) ที่เดินผ่านล่าสุด ไว้แยกเน็ตกระตุกออกจากวาร์ปจริง
+    rubber_times = deque()   # เวลาที่ถูกดึงกลับล่าสุด (นับความถี่)
+    rubber_until = 0.0       # ก่อนเวลานี้ข้ามการตรวจมุมกล้อง
     while True:
         time.sleep(0.1)
         try:
             if not _active():
                 prev_pos, prev_ori, screen_polls, active_since = None, None, 0, None
+                history.clear()
+                rubber_times.clear()
                 continue
             if active_since is None:
                 active_since = time.time()
@@ -107,16 +126,40 @@ def _loop():
             now = time.time()
             if prev_pos is not None and now - prev_t > FAILSAFE_MAX_GAP_SECONDS:
                 prev_pos, prev_ori = None, None    # loop สะดุด (เช่นรอ API) ตำแหน่งเก่าเกินไปจะเทียบไม่ได้ เริ่มวัดใหม่
+                history.clear()
             prev_t = now
 
             pos = sensors.position()
             if teleport_detected(prev_pos, pos, FAILSAFE_JUMP_BLOCKS):
-                trigger(f"ถูกวาร์ป/ดึงตำแหน่งผิดปกติ ({math.dist(prev_pos, pos):.1f} บล็อก)")
-                continue
+                jump = math.dist(prev_pos, pos)
+                if FAILSAFE_RUBBERBAND_ENABLED and is_rubber_band(
+                    prev_pos, pos, [p for _, p in history],
+                    FAILSAFE_RUBBERBAND_TOLERANCE, FAILSAFE_RUBBERBAND_MAX_BLOCKS,
+                ):
+                    # เน็ตกระตุก: ถูกดึงกลับไปจุดที่เพิ่งผ่าน ไม่ใช่วาร์ปจริง → เตือนเฉย ๆ แล้วเดินต่อ
+                    rubber_times.append(now)
+                    limit, window = FAILSAFE_RUBBERBAND_LIMIT
+                    while rubber_times and now - rubber_times[0] > window:
+                        rubber_times.popleft()
+                    cecho(f"[Failsafe] ถูกดึงกลับ {jump:.1f} บล็อก (เน็ตกระตุก?) ข้ามไป "
+                          f"[{len(rubber_times)} ครั้งใน {window:.0f}s]", WARN)
+                    rubber_until = now + FAILSAFE_RUBBERBAND_GRACE
+                    prev_ori = None
+                    if limit > 0 and len(rubber_times) >= limit:
+                        trigger(f"ถูกดึงกลับ {len(rubber_times)} ครั้งใน {window:.0f} วินาที (เน็ตไม่เสถียรเกินไป)")
+                        continue
+                else:
+                    trigger(f"ถูกวาร์ป/ดึงตำแหน่งผิดปกติ ({jump:.1f} บล็อก)")
+                    continue
             prev_pos = pos
+            history.append((now, pos))
+            while history and now - history[0][0] > FAILSAFE_HISTORY_SECONDS:
+                history.popleft()
 
             ori = tuple(ms.player_orientation())
-            if rotation_jumped(prev_ori, ori, FAILSAFE_ROTATION_DEGREES):
+            if now < rubber_until:
+                prev_ori = ori        # เพิ่งถูกดึงกลับ: มุมกล้องอาจถูกรีเซ็ตพร้อมกัน ยังไม่ตรวจรอบนี้
+            elif rotation_jumped(prev_ori, ori, FAILSAFE_ROTATION_DEGREES):
                 trigger("ถูกหันหัว/เปลี่ยนมุมกล้องโดยไม่ได้สั่ง")
                 continue
             prev_ori = ori

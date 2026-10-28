@@ -20,6 +20,7 @@ from farm.config import (
     DEBUG_TIMING, PEST_USE_WARP, WARP_SLOT, WARP_MIN_DISTANCE, WARP_MAX_PER_PEST,
     WARP_SELECT_DELAY, WARP_SETTLE_TIMEOUT, VACUUM_REACH, VACUUM_TICK,
     PEST_APPEAR_TIMEOUT, PEST_PROGRESS_EXTEND, PEST_PLOT_MAX_SECONDS,
+    PEST_AIM_STEPS, PEST_AIM_DELAY, PEST_TRACK_MAX_DEGREES, PEST_WALK_MAX_ANGLE,
 )
 from farm.garden import PLOT_CENTERS
 from farm.utils import (
@@ -37,6 +38,8 @@ from farm.movement import (
     fly_to_height,
     move_to_plot_center,
     smooth_look_at,
+    smooth_look_at_pos,
+    step_look_at_pos,
     stop_all_movement,
     land_if_flying,
     release_all_keys,
@@ -154,8 +157,8 @@ def _vacuum_single_silverfish(sf, deadline: float = None) -> bool:
         dist = _sqrt(dx**2 + dy**2 + dz**2)
         horiz = _sqrt(dx**2 + dz**2)
 
-        ms.player_look_at(s[0], s[1], s[2])
-        ms.player_press_forward(dist > 5)
+        off_angle = step_look_at_pos(s[0], s[1], s[2], PEST_TRACK_MAX_DEGREES)
+        ms.player_press_forward(dist > 5 and off_angle <= PEST_WALK_MAX_ANGLE)   # ยังหันไม่ถึง อย่าเพิ่งเดินผิดทาง
 
         above_and_unreachable = horiz < 1.5 and dy < -1.0 and dist > 5
 
@@ -194,8 +197,9 @@ def _warp_toward(target) -> bool:
     ms.player_press_use(False)
     ms.player_inventory_select_slot(WARP_SLOT)
     s = target.position
-    ms.player_look_at(s[0], s[1], s[2])
-    time.sleep(WARP_SELECT_DELAY)
+    aim_started = time.time()
+    smooth_look_at_pos(s[0], s[1], s[2], steps=PEST_AIM_STEPS, delay=PEST_AIM_DELAY)
+    time.sleep(max(0.0, WARP_SELECT_DELAY - (time.time() - aim_started)))   # เวลาหันนับรวมเป็นเวลารอเปลี่ยน slot
     before = ms.player_position()
     ms.player_press_use(True)
     time.sleep(0.03)
@@ -245,8 +249,9 @@ def _chase_with_warp(sf, deadline: float = None) -> bool:
                 time.sleep(WARP_SELECT_DELAY)
                 vacuum_ready = True
 
-            ms.player_look_at(s[0], s[1], s[2])
-            ms.player_press_forward(dist > VACUUM_REACH)  # วาร์ปหมดแล้วยังไกลอยู่ → เดินเข้าไป
+            off_angle = step_look_at_pos(s[0], s[1], s[2], PEST_TRACK_MAX_DEGREES)
+            # วาร์ปหมดแล้วยังไกลอยู่ → เดินเข้าไป (เมื่อหันเกือบตรงแล้วเท่านั้น)
+            ms.player_press_forward(dist > VACUUM_REACH and off_angle <= PEST_WALK_MAX_ANGLE)
             ms.player_press_use(True)
             time.sleep(VACUUM_TICK)
     finally:

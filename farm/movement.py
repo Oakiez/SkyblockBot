@@ -100,6 +100,23 @@ def start_movement(direction: str, hold_forward: bool = False):
 # ============================================================
 
 
+EYE_HEIGHT = 1.62   # player_position() คือตำแหน่งเท้า ตาอยู่สูงกว่านี้
+
+
+def _wrap_degrees(angle: float) -> float:
+    """ทำให้มุมอยู่ในช่วง [-180, 180)"""
+    return (angle + 180.0) % 360.0 - 180.0
+
+
+def yaw_pitch_to(x: float, y: float, z: float) -> tuple:
+    """yaw/pitch ที่ต้องหันเพื่อมองจากตาผู้เล่นไปยังจุด (x, y, z)"""
+    p = ms.player_position()
+    dx, dy, dz = x - p[0], y - (p[1] + EYE_HEIGHT), z - p[2]
+    yaw = -_degrees(_atan2(dx, dz))
+    pitch = -_degrees(_atan2(dy, _sqrt(dx * dx + dz * dz)))
+    return yaw, pitch
+
+
 def smooth_look_at(
     target_yaw: float, target_pitch: float, steps: int = 10, delay: float = 0.05
 ):
@@ -107,20 +124,42 @@ def smooth_look_at(
     state.expect_teleport(steps * delay + 1.0)   # ไม่ให้ failsafe เข้าใจว่าถูกหันหัวบังคับ
     current_yaw, current_pitch = ms.player_orientation()
 
-    while target_yaw > 180:
-        target_yaw -= 360
-    while target_yaw < -180:
-        target_yaw += 360
+    # หมุนทางที่สั้นกว่าเสมอ: yaw ของเกมสะสมเกิน ±180 ได้ (เช่น 520) จึงต้อง wrap ที่ "ส่วนต่าง"
+    # ไม่ใช่แค่ wrap เป้าหมาย ไม่งั้น 170 → -170 จะหมุนกลับ 340 องศาแทน 20
+    yaw_delta = _wrap_degrees(target_yaw - current_yaw)
+    target_pitch = max(-90.0, min(90.0, target_pitch))
+    steps = max(1, steps)
 
     for i in range(steps + 1):
         t = i / steps
         smooth_t = t * t * (3.0 - 2.0 * t)
         ms.player_set_orientation(
-            current_yaw + (target_yaw - current_yaw) * smooth_t,
+            current_yaw + yaw_delta * smooth_t,
             current_pitch + (target_pitch - current_pitch) * smooth_t,
         )
         if i < steps:
             time.sleep(delay)
+
+
+def smooth_look_at_pos(x: float, y: float, z: float, steps: int = 10, delay: float = 0.05):
+    """หันไปมองจุด (x, y, z) แบบ smooth (บล็อกจนหันเสร็จ)"""
+    yaw, pitch = yaw_pitch_to(x, y, z)
+    smooth_look_at(yaw, pitch, steps=steps, delay=delay)
+
+
+def step_look_at_pos(x: float, y: float, z: float, max_degrees: float) -> float:
+    """หันเข้าหาจุด (x, y, z) ได้ไม่เกิน max_degrees ต่อครั้ง ไม่บล็อก (เรียกทุก tick ใน loop)
+    คืนมุมที่ยังเหลือก่อนหันครั้งนี้ (องศา) ไว้เช็คว่าเล็งตรงหรือยัง"""
+    target_yaw, target_pitch = yaw_pitch_to(x, y, z)
+    yaw, pitch = ms.player_orientation()
+    d_yaw = _wrap_degrees(target_yaw - yaw)
+    d_pitch = target_pitch - pitch
+    remaining = _sqrt(d_yaw * d_yaw + d_pitch * d_pitch)
+    if remaining > max_degrees > 0:
+        scale = max_degrees / remaining   # ย่อทั้งสองแกนเท่ากัน ให้กล้องไหลเป็นเส้นตรงไปหาเป้า
+        d_yaw, d_pitch = d_yaw * scale, d_pitch * scale
+    ms.player_set_orientation(yaw + d_yaw, max(-90.0, min(90.0, pitch + d_pitch)))
+    return remaining
 
 
 # ============================================================

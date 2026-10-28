@@ -11,6 +11,7 @@ from system.lib import lib_inv  # works without mappings
 from farm.config import (
     SELL_AFTER_ROUND,
     SELL_ITEMS,
+    SELL_ALL_VINYLS,
     FARM_LOADOUT_SLOT,
     PEST_LOADOUT_SLOT,
 )
@@ -75,16 +76,17 @@ def find_items_to_sell() -> list[dict]:
 
         matched_id = None
 
-        # --- วิธีที่ 1: เช็ค item type สำหรับ music disc ---
-        if "music_disc" in item_type:
-            # หาว่าตรงกับ vinyl ตัวไหนจาก NBT
+        # --- วิธีที่ 1: vinyl = music disc หรือไอเท็มที่รหัสขึ้นต้น VINYL_ ---
+        if "music_disc" in item_type or "VINYL_" in item_nbt:
+            # ตรงกับ vinyl ที่ระบุใน SELL_ITEMS ตัวไหนจาก NBT
             for vid in vinyl_ids:
                 if vid in item_nbt:
                     matched_id = vid
                     break
-            # ถ้า NBT ไม่ match แต่ type เป็น music_disc → ขายทั้งหมด
-            if matched_id is None and vinyl_ids:
-                matched_id = f"VINYL(music_disc)"
+            # ไม่อยู่ในลิสต์: ขายอยู่ดีถ้าเปิด SELL_ALL_VINYLS (ไม่งั้นข้าม ขายเฉพาะที่ระบุ)
+            if matched_id is None and SELL_ALL_VINYLS:
+                found_id = re.search(r"VINYL_[A-Z0-9_]+", item_nbt)
+                matched_id = found_id.group(0) if found_id else "VINYL(music_disc)"
 
         # --- วิธีที่ 2: เช็ค NBT ID สำหรับ item ทั่วไป ---
         if matched_id is None:

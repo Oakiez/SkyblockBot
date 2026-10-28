@@ -16,6 +16,7 @@ from contextlib import contextmanager
 
 is_running:       bool = False
 paused:           bool = False
+pause_hold:       bool = False   # True = พักจาก Discord: ไม่ auto-unpause จนกว่าจะสั่ง resume
 round_count:      int  = 0
 current_profile:  str  = None
 start_time:       float = 0

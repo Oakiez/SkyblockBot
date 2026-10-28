@@ -211,6 +211,33 @@ class RefocusTests(unittest.TestCase):
         self.assertEqual(tab_bridge.grab_changed_at(), 0.0)
 
 
+class RegrabAttackRefreshTests(unittest.TestCase):
+    def test_release_then_press_once_per_regrab(self):
+        import farm.farm_loop as fl
+        from farm import tab_bridge
+
+        calls = []
+        fl.ms.player_press_attack.side_effect = lambda v: calls.append(v)
+        orig_hold, orig_sleep = fl.hold_movement, fl.time.sleep
+        fl.hold_movement = lambda *a, **k: None
+        try:
+            fl._last_grab_handled = 0.0
+            tab_bridge._input["grab"] = True
+            tab_bridge._input["grab_changed_t"] = 100.0
+            fl._refresh_attack_after_regrab("right", {})
+            fl._refresh_attack_after_regrab("right", {})        # จับคืนครั้งเดียว ต้องทำครั้งเดียว
+            self.assertEqual(calls, [False, True])               # ปล่อยก่อน แล้วค่อยกด
+
+            calls.clear()
+            tab_bridge._input["grab"] = False                    # ถูกปล่อยเมาส์ (ไม่ใช่จับคืน) → ไม่ต้องทำ
+            tab_bridge._input["grab_changed_t"] = 200.0
+            fl._refresh_attack_after_regrab("right", {})
+            self.assertEqual(calls, [])
+        finally:
+            fl.ms.player_press_attack.side_effect = None
+            fl.hold_movement = orig_hold
+
+
 class RestoreFarmStateTests(unittest.TestCase):
     def test_restore_order_and_final_attack(self):
         import farm.actions as act

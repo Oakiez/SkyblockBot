@@ -12,8 +12,8 @@ from farm.config import (
     PAUSE_KEY, START_STOP_KEY,
     STUCK_CHECK_INTERVAL, STUCK_CHECK_THRESHOLD, STUCK_CHECK_COUNT, STEP_END_DELAY,
     AUTO_UNPAUSE_SECONDS, AMOUNT_OF_PESTS, SCREENSHOT_INTERVAL,
-    PEST_CHECK_INTERVAL, OUTFIT_WAIT_TIMEOUT, DEBUG_TIMING, CHATLOG_ENABLED, ATTACK_REASSERT_INTERVAL, FARM_TOOL_SLOT, REFOCUS_GRACE_SECONDS, SPRAY_EVERY_SECONDS,
-    BUFF_EVERY_SECONDS, BUFF_RETRY_SECONDS, MAINTENANCE_CHECK_INTERVAL,
+    PEST_CHECK_INTERVAL, OUTFIT_WAIT_TIMEOUT, DEBUG_TIMING, CHAT_SOURCE, LIB_EVENT_LOAD_TIMEOUT, ATTACK_REASSERT_INTERVAL, FARM_TOOL_SLOT, REFOCUS_GRACE_SECONDS, SPRAY_EVERY_SECONDS,
+    BUFF_EVERY_SECONDS, BUFF_RETRY_SECONDS, MAINTENANCE_CHECK_INTERVAL, ATTACK_RELEASE_SECONDS,
 )
 from farm.profiles import load_profile
 from farm.buff import get_buff
@@ -30,10 +30,51 @@ from farm.recovery import (
     check_for_pest_spawn_message, check_for_pest_cooldown_message,
     check_server_change,
 )
-from farm import sensors, watchdog, metrics, chatlog, failsafe, tab_bridge
+from farm import sensors, watchdog, metrics, chatlog, failsafe, tab_bridge, hud, notify
+from farm.config import RECONNECT_WORLD_SETTLE_SECONDS, RECONNECT_REJOIN_COMMANDS, RECONNECT_RESUME_FARM
+from botkit.link import BotLink
+from botkit.reconnect import Reconnector
+from botkit.discord_io import fmt_duration
 from farm.actions import restore_farm_state
 import farm.state as state
 
+
+
+# ============================================================
+# CHAT SOURCE
+# ============================================================
+
+def _load_lib_event(timeout: float) -> bool:
+    """import system.lib.lib_event ใน thread แยก: ตอน import มันรอ socket จากสคริปต์ในเกมแบบไม่มี timeout
+    ถ้าสคริปต์ในเกมพัง บอทจะค้างตั้งแต่เริ่ม จึงรอแค่ timeout แล้วถอยไปใช้ log แทน"""
+    result = {}
+
+    def _import():
+        try:
+            import system.lib.lib_event  # noqa: F401 — import แล้ว EventQueue มี register_chat_listener(eventlib=True)
+            result["ok"] = True
+        except BaseException as e:      # lib เรียก sys.exit() ถ้าเวอร์ชัน Minescript ไม่ตรง
+            result["err"] = e
+
+    t = threading.Thread(target=_import, daemon=True)
+    t.start()
+    t.join(timeout)
+    if result.get("ok"):
+        return True
+    cecho(f"📜 lib_event failed to load ({result.get('err', 'timeout')})", WARN)
+    return False
+
+
+def _start_chat_source(event_queue, handlers) -> None:
+    """ให้ข้อความแชทจากเซิร์ฟเวอร์ไปถึง handlers: lib_event (ผ่าน event_queue) หรืออ่าน latest.log"""
+    if CHAT_SOURCE == "eventlib" and _load_lib_event(LIB_EVENT_LOAD_TIMEOUT):
+        event_queue.register_chat_listener(eventlib=True)   # ข้อความเข้า event_loop เป็น event "chat"
+        cecho("📜 Chat source: lib_event", DETAIL)
+        return
+    ok = chatlog.start(handlers)
+    cecho("📜 Chat source: " + ("latest.log" if ok else "chat events only (log not found)"), DETAIL)
+    if not ok:
+        event_queue.register_chat_listener()
 
 
 # ============================================================
@@ -83,11 +124,11 @@ def check_pause() -> float:
 
     while state.paused:
         elapsed = time.time() - pause_start
-        if elapsed >= AUTO_UNPAUSE_SECONDS:
+        if elapsed >= AUTO_UNPAUSE_SECONDS and not state.pause_hold:
             cecho("⏯️ Auto-unpausing farm...", WARN)
             state.paused = False
             break
-        if int(elapsed) % 5 == 0 and int(elapsed) != last_log and int(elapsed) > 0:
+        if not state.pause_hold and int(elapsed) % 5 == 0 and int(elapsed) != last_log and int(elapsed) > 0:
             remaining = AUTO_UNPAUSE_SECONDS - int(elapsed)
             cecho(f"⏳ Auto-unpause in {remaining}s...", DETAIL)
             last_log = int(elapsed)
@@ -166,6 +207,26 @@ def _handle_event(ev: str) -> None:
         switch_to_farming_outfit()
     elif ev == "PEST_COOLDOWN":
         switch_to_pest_outfit()
+
+
+_last_grab_handled = 0.0
+
+
+def _refresh_attack_after_regrab(direction: str, profile: dict) -> None:
+    """ปล่อยปุ่มตี > 1 tick หลังเกมจับเมาส์คืน เพื่อล้าง missTime ของเกม (ทำครั้งเดียวต่อการจับคืนหนึ่งครั้ง)"""
+    global _last_grab_handled
+    changed_at = tab_bridge.grab_changed_at()
+    if changed_at <= _last_grab_handled:
+        return
+    _last_grab_handled = changed_at
+    grabbed, _active = tab_bridge.input_state()
+    if not grabbed:
+        return
+    ms.player_press_attack(False)
+    time.sleep(ATTACK_RELEASE_SECONDS)
+    ms.player_press_attack(True)
+    hold_movement(direction, hold_forward=profile.get("hold_forward", False))
+    cecho("🖱️ Mouse re-grabbed — refreshed attack", DETAIL)
 
 
 def harvest_direction(direction_data: dict, movement_num: int, profile: dict) -> str | None:
@@ -254,6 +315,11 @@ def harvest_direction(direction_data: dict, movement_num: int, profile: dict) ->
             last_check      = now
             last_inv_change = now
             last_inventory  = None
+
+        # --- เพิ่งจับเมาส์คืน (กลับมา focus): เกมตั้ง missTime=10000 ใน grabMouse() ซึ่งห้ามทุบบล็อก
+        #     และจะล้างก็ต่อเมื่อมี tick ที่ "ไม่ได้กดปุ่มตี" — ถ้าบอทกดค้างตลอด จะไม่ทุบเลยหลายนาที
+        #     จึงปล่อยปุ่มตีสั้น ๆ ให้เกินหนึ่ง tick แล้วกดใหม่ ---
+        _refresh_attack_after_regrab(direction, profile)
 
         # --- กดคลิกซ้ายค้างซ้ำเป็นระยะ: สถานะปุ่มอาจหลุดเงียบ ๆ (เช่นหลังปิด GUI) แล้วบอทไม่รู้ ---
         if now - last_attack >= ATTACK_REASSERT_INTERVAL and not state.paused:
@@ -378,53 +444,143 @@ def auto_farm(profile_name: str):
     cecho(f"🚜 Starting: {profile['name']}", GOLD)
 
     initialized = False
+    ctx = {"resume": False, "world_up": True}   # resume = ตอนหลุดบอททำงานอยู่ → ต่อสำเร็จแล้วเริ่มต่อ
+
+    def _status_fields():
+        elapsed = time.time() - state.start_time if state.start_time else 0
+        status = "RUNNING" if state.is_running and not state.paused else ("PAUSED" if state.paused else "STOPPED")
+        fields = [("Profile", state.current_profile or "-"), ("Status", status), ("Mode", state.mode),
+                  ("Round", str(state.round_count)), ("Runtime", fmt_duration(elapsed) if elapsed else "-")]
+        try:
+            (count, plots), _t = sensors.cached_pests()
+            fields.append(("Pests", f"{max(state.pest_alive_hint, count)}/{AMOUNT_OF_PESTS}"))
+            x, y, z = sensors.position()
+            fields.append(("Position", f"{x:.0f}, {y:.0f}, {z:.0f}"))
+        except Exception:
+            pass
+        if state.failsafe_reason:
+            fields.append(("Failsafe", state.failsafe_reason))
+        if reconnector.active:
+            fields.append(("Reconnect", "trying…"))
+        return fields
+
+    def _alert(title, description="", level="info", screenshot=False):
+        cecho(f"{title} {description}".strip().split("\n")[0], {"error": ERROR, "warn": WARN, "ok": SUCCESS}.get(level, DETAIL))
+        link.alert(title, description, level, screenshot)
+
+    def _remote_stop():
+        reconnector.cancel()
+        ctx["resume"] = False
+        if not state.is_running:
+            return "บอทหยุดอยู่แล้ว (ยกเลิกการต่อเซิร์ฟเวอร์/เริ่มต่อที่ค้างอยู่ด้วย)"
+        state.is_running = False
+        state.paused = False
+        state.pause_hold = False
+        try:
+            stop_all_movement()
+        except Exception:
+            pass
+        return "สั่งหยุดบอทแล้ว — กด ] ในเกมเมื่อพร้อมเริ่มใหม่"
+
+    def _remote_pause():
+        if not state.is_running:
+            return "บอทไม่ได้ทำงานอยู่"
+        state.pause_hold = True    # พักค้างไว้จนกว่าจะสั่ง resume (ไม่ auto-unpause)
+        state.paused = True
+        return "พักบอทแล้ว — ส่ง `resume` เพื่อต่อ"
+
+    def _remote_resume():
+        if not state.paused:
+            return "บอทไม่ได้พักอยู่"
+        state.pause_hold = False
+        state.paused = False
+        return "ต่อบอทแล้ว"
+
+    link = BotLink("farm", _status_fields, {"stop": _remote_stop, "pause": _remote_pause, "resume": _remote_resume})
+    notify.link = link
+
+    def _after_reconnect():
+        """ต่อเซิร์ฟเวอร์สำเร็จ: รอโลกโหลด → กลับเข้า Skyblock/Garden → เริ่มฟาร์มต่อ (ถ้าตอนหลุดกำลังฟาร์มอยู่)"""
+        time.sleep(RECONNECT_WORLD_SETTLE_SECONDS)
+        if not chatlog.is_active():
+            # สคริปต์ที่ฝังในเกม (เช่น lib_event) อาจไม่รอดการหลุด → สลับไปอ่านแชทจาก latest.log ที่ไม่พึ่งสคริปต์ในเกม
+            # (ตอน chatlog ทำงาน event แชทจาก eventlib จะถูกข้าม จึงไม่ซ้ำ)
+            chatlog.start(chat_handlers)
+        for command, wait in RECONNECT_REJOIN_COMMANDS:
+            ms.execute(command)
+            time.sleep(wait)
+        if RECONNECT_RESUME_FARM and ctx["resume"]:
+            ctx["resume"] = False
+            state.is_running = True
+            _alert("▶️ Farm resumed after reconnect", "", "ok", True)
+        else:
+            _alert("Reconnected — farm stays stopped", "บอทไม่ได้ทำงานตอนหลุด หรือปิดการเริ่มต่ออัตโนมัติไว้ — กด ] เมื่อพร้อม", "info", True)
+
+    reconnector = Reconnector(_alert, after_connected=_after_reconnect)
+    reconnector.remember_server()
 
     event_queue = ms.EventQueue()
     event_queue.register_key_listener()
-    event_queue.register_chat_listener()
     event_queue.register_world_listener()  # ป้องกัน script ตายเงียบเมื่อ disconnect
+    chat_handlers = [
+        check_for_restart_message, check_for_limbo_message,
+        check_for_pest_cooldown_message, check_for_pest_spawn_message,
+    ]
+    _start_chat_source(event_queue, chat_handlers)   # chat listener ลงทะเบียนในนี้ตามแหล่งที่ใช้
 
     def event_loop():
         while True:
             try:
-                event = event_queue.get(block=False)
+                # lib_event ส่งแชททุกข้อความ (มาเป็นชุดได้) → ดึงต่อทันทีจนคิวว่าง ค่อยพัก
+                event = event_queue.get(block=True, timeout=0.05)
                 if event.type == "key" and event.action == 1:
                     if event.key == START_STOP_KEY:
                         state.is_running = not state.is_running
                         if state.is_running:
                             cecho("▶ Farm Started!", SUCCESS)
+                            reconnector.cancel()      # คุณสั่งเริ่มเอง = เข้าเกมมาดูแลเองแล้ว
                         else:
                             cecho("⏹ Farm Stopped", ERROR)
+                            ctx["resume"] = False
                             stop_all_movement()
                             ms.execute("/setspawn")
+                            link.alert("⏹ Farm stopped (manual)", "", "info")
                     elif event.key == PAUSE_KEY and state.is_running:
+                        state.pause_hold = False      # พักด้วยปุ่มยังมี auto-unpause เหมือนเดิม
                         state.paused = not state.paused
                 elif event.type == "chat" and not chatlog.is_active():
-                    check_for_restart_message(event.message)
-                    check_for_limbo_message(event.message)
-                    check_for_pest_cooldown_message(event.message)
-                    check_for_pest_spawn_message(event.message)
+                    for handler in chat_handlers:
+                        handler(event.message)
                 elif event.type == EventType.WORLD:
-                    if not event.connected:
+                    ctx["world_up"] = bool(event.connected)
+                    reconnector.world_event(event.connected)
+                    if event.connected:
+                        reconnector.remember_server()
+                    else:
                         cecho("🔌 Disconnected from world! Stopping farm...", ERROR)
+                        if not reconnector.active:    # หลุดซ้อนระหว่างกำลังต่อใหม่ ไม่ทับค่า resume เดิม
+                            ctx["resume"] = state.is_running and not state.failsafe_reason
                         state.is_running = False
-                        stop_all_movement()
+                        try:
+                            stop_all_movement()
+                        except Exception:
+                            pass
+                        if not reconnector.begin():   # begin() แจ้ง Discord เองเมื่อเริ่มต่อใหม่
+                            link.alert("🔌 Disconnected from world", "หยุดบอทแล้ว (ปิดการต่อใหม่อัตโนมัติ/ไม่รู้เซิร์ฟเวอร์)",
+                                       "error", False)
             except:
                 pass
-            time.sleep(0.05)
 
     threading.Thread(target=event_loop, daemon=True).start()
     sensors.start()
     watchdog.start()
     failsafe.start()
-    if CHATLOG_ENABLED:
-        ok = chatlog.start([
-            check_for_restart_message, check_for_limbo_message,
-            check_for_pest_cooldown_message, check_for_pest_spawn_message,
-        ])
-        cecho("📜 Chat log reader: " + ("on" if ok else "OFF (log not found, using chat events)"), DETAIL)
+    hud.start(profile)
+    link.start()
 
-    try:
+    def _rounds():
+        """ลูปฟาร์มหลัก (เดิมอยู่ใน try โดยตรง) แยกเป็นฟังก์ชันเพื่อให้กลับมาทำงานต่อได้หลังหลุดเซิร์ฟเวอร์"""
+        nonlocal initialized
         while True:
             if not state.is_running:
                 initialized = False
@@ -454,12 +610,14 @@ def auto_farm(profile_name: str):
                     cecho("⚠ Server change detected! Stopping farm...", ERROR)
                     state.is_running = False
                     stop_all_movement()
+                    notify.event("⚠️ Server change detected — farm stopped", "ตำแหน่งกระโดดไกลผิดปกติ (อาจถูกย้ายเซิร์ฟเวอร์)", "error", True)
                     break
 
                 result = harvest_direction(step, pattern_pos + 1, profile)
 
                 if result == "WATCHDOG":
                     cecho("🛠 Watchdog recovery: restarting round...", WARN)
+                    notify.event("🛠 Watchdog recovery", "ตำแหน่งไม่ขยับนานผิดปกติ → /warp garden แล้วเริ่มรอบใหม่", "warn")
                     state.watchdog_triggered = False
                     time.sleep(3)  # รอ /warp garden เสร็จ
                     warp_to_garden_and_land()
@@ -522,9 +680,32 @@ def auto_farm(profile_name: str):
             cecho(f"🎉 Round {state.round_count} of '{profile_name}' complete!", GOLD)
             time.sleep(1)
 
+    try:
+        while True:
+            try:
+                _rounds()
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                if not ctx["world_up"] or reconnector.active:
+                    # หลุดจากโลกแล้วคำสั่งเกม (ตำแหน่ง/คลิก ฯลฯ) ย่อมพัง: ไม่ใช่บั๊ก รอต่อใหม่แล้วเริ่มรอบใหม่
+                    cecho(f"[Disconnected] ข้าม error ระหว่างหลุด: {type(e).__name__}: {e}", DETAIL)
+                    initialized = False
+                    time.sleep(1.0)
+                    continue
+                link.alert("💥 farm crashed", f"{type(e).__name__}: {e}", "error", screenshot=True, wait=True)
+                raise
     except KeyboardInterrupt:
         cecho("\n⏹ Farm stopped by user", ERROR)
     finally:
-        stop_all_movement()
+        reconnector.cancel()
+        try:
+            stop_all_movement()
+        except Exception:
+            pass
+        hud.stop()
+        elapsed = time.time() - state.start_time if state.start_time else 0
+        link.alert("⏹ farm script ended", f"{state.round_count} รอบ ใน {fmt_duration(elapsed)}", "warn", wait=True)
+        link.stop()
         _print_session_summary(profile_name)
         cecho("✅ Shutdown complete.", SUCCESS)

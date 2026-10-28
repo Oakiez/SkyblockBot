@@ -10,6 +10,7 @@ import time
 from system.lib import minescript as ms
 from farm.utils import cecho, SUCCESS, WARN, ERROR, DETAIL, GOLD, AQUA, strip_color_codes
 from farm.movement import fly, stop_fly, release_all_keys, warp_to_garden_and_land
+from farm import notify
 import farm.state as state
 from farm.config import PEST_COOLDOWN_TRIGGER_SECONDS
 
@@ -20,6 +21,7 @@ from farm.config import PEST_COOLDOWN_TRIGGER_SECONDS
 
 def handle_limbo():
     cecho("[Script] Limbo detected! Recovering...", ERROR)
+    notify.event("⚠️ Limbo detected — recovering", "ถูกส่งไป Limbo → /lobby → /skyblock → /warp garden", "warn", True)
     was_running = state.is_running
     prev_mode = state.mode
     state.mode = state.Mode.RECOVERY
@@ -41,6 +43,7 @@ def handle_limbo():
     if was_running:
         state.is_running = True
         cecho("[Script] Limbo recovery complete, resuming farm...", SUCCESS)
+        notify.event("✅ Limbo recovery complete", "กลับมาฟาร์มต่อแล้ว", "ok")
 
 
 def check_for_limbo_message(message: str) -> bool:
@@ -59,6 +62,7 @@ def check_for_limbo_message(message: str) -> bool:
 
 def handle_restart():
     cecho("[Script] Server restart detected! Waiting 20s...", ERROR)
+    notify.event("⚠️ Server restart detected — recovering", "→ /hub → /skyblock → /warp garden", "warn")
     was_running = state.is_running
     prev_mode = state.mode
     state.mode = state.Mode.RECOVERY
@@ -80,6 +84,7 @@ def handle_restart():
     if was_running:
         state.is_running = True
         cecho("[Script] Restart recovery complete, resuming farm...", SUCCESS)
+        notify.event("✅ Restart recovery complete", "กลับมาฟาร์มต่อแล้ว", "ok")
 
 
 def check_for_restart_message(message: str) -> bool:
