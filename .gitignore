@@ -12,14 +12,8 @@ config.txt
 blockpacks/
 minescript.rar
 
-# ไม่ใช่ส่วนของบอทฟาร์ม (เก็บไว้ใช้ในเครื่องเท่านั้น)
+# เก็บไว้ใช้ในเครื่องเท่านั้น (ไม่ขึ้น GitHub)
+archive/
 NFarm/
 NFarm.py
-mining.py
-glacite.py
-mob.py
-click.py
-test.py
-smoothcam.py
-new_rotation.py
 minescript_plus.py

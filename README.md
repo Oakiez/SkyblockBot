@@ -70,11 +70,19 @@
 
    ```text
    minescript/
-   ├── farm.py          ← entry point
-   ├── villager.py      ← รับบัฟอย่างเดียว
-   ├── farm/            ← ตัวบอท
+   ├── farm.py  villager.py          ← ตัวเรียกคำสั่ง \farm \villager (รับบัฟอย่างเดียว)
+   ├── mining.py  glacite.py         ← ตัวเรียก \mining \glacite
+   ├── mob.py  exp.py  click.py      ← ตัวเรียก \mob \exp \click
+   ├── farm/            ← บอทฟาร์ม (หลักของโปรเจกต์นี้)
+   ├── mining/          ← AutoMine, Glacite
+   ├── combat/          ← ฟาร์มม็อบ
+   ├── exp/             ← Experimentation Table อัตโนมัติ
+   ├── tools/           ← เครื่องมือเล็ก ๆ
+   ├── botkit/          ← ส่วนกลาง: แจ้งเตือน/สั่งการผ่าน Discord, ต่อเซิร์ฟเวอร์ใหม่ (ไม่บังคับ)
    └── tests/           ← เทสต์ออฟไลน์
    ```
+
+   > Minescript หาคำสั่งจากไฟล์ `.py` ที่อยู่ระดับบนสุดของ `minescript/` เท่านั้น ไฟล์ระดับบนสุดจึงเป็นตัวเรียกสั้น ๆ ส่วนโค้ดจริงอยู่ในโฟลเดอร์ตามหน้าที่
 
 2. **(ไม่บังคับ) สร้าง `farm/secrets_local.py`** ไฟล์นี้อยู่ใน `.gitignore` ห้าม commit
 
@@ -254,6 +262,20 @@ flowchart TD
 | `farm/failsafe.py` · `farm/watchdog.py` | หยุดเมื่อผิดปกติ · กู้คืนเมื่อค้าง |
 | `farm/state.py` · `farm/metrics.py` | state, `Mode`, คิว event · จับเวลา |
 | `farm/config.py` | ค่าตั้งทั้งหมด |
+| `farm/hud.py` | แผงสถานะบนจอ (วาดด้วย `lib_ren`) |
+| `farm/notify.py` | ตัวแจ้งเตือน Discord ของ farm (ตัวส่งจริงอยู่ที่ `botkit`) |
+| `botkit/settings.py` | ค่าตั้งของ botkit + โหลดค่าลับจาก `farm/secrets_local.py` (วิธีสร้าง bot อยู่หัวไฟล์) |
+| `botkit/discord_io.py` · `botkit/link.py` | ส่งข้อความ Discord (webhook/bot) · รวมแจ้งเตือน + heartbeat + คำสั่งไว้ที่เดียว |
+| `botkit/remote.py` | สั่ง `stop` / `pause` / `resume` / `status` / `screenshot` จาก Discord (เฉพาะ user ID ที่อนุญาต) |
+| `botkit/reconnect.py` | ต่อเซิร์ฟเวอร์ใหม่อัตโนมัติเมื่อหลุด (ไม่ต่อถ้าเหตุผลเข้าข่ายถูกแบน) |
+| `botkit/unfocused.py` | สคริปต์ในเกมที่ทุบบล็อกแทนเกมตอนหน้าต่างไม่โฟกัส |
+| `mining/automine.py` | `\mining` ขุดอัตโนมัติ: เล็งจุดที่มองเห็นบนหน้าบล็อก, ขุดตอน alt-tab, ใช้สกิลเมื่อแชทบอกว่าพร้อม |
+| `mining/glacite.py` · `mining/rotation.py` | `\glacite` ขุด Glacite · ตัวช่วยหมุนกล้อง |
+| `combat/mob.py` | `\mob` ฟาร์มม็อบ |
+| `exp/table.py` | `\exp` Experimentation Table (Superpairs / Chronomatron / Ultrasequencer) |
+| `tools/` | `click.py` (`\click`), `smoothcam.py` |
+
+> **หมายเหตุ:** `mining/`, `combat/`, `exp/`, `tools/` และ `botkit/` ผ่านการทดสอบออฟไลน์เท่านั้น (Minescript จำลอง) ฟีเจอร์ส่วนใหญ่ยังไม่ได้พิสูจน์ในเกมจริงทั้งหมด โดยเฉพาะการต่อเซิร์ฟเวอร์ใหม่อัตโนมัติ
 
 ---
 
